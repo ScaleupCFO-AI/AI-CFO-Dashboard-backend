@@ -14,7 +14,7 @@ cur.execute(
     values (%s, %s)
     returning id;
     """,
-    ("Synthetic Demo Company", "csv_upload")
+    ("Restoration Hardware Inc.", "xlsx_upload")
 )
 
 company_id = cur.fetchone()[0]

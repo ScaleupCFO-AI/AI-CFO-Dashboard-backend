@@ -1,33 +1,22 @@
 def validate_monthly_financials(df):
     issues = []
 
-    for _, row in df.iterrows():
-        # Rule 1: Revenue must be non-negative
-        if row["Revenue"] < 0:
-            issues.append({
-                "period_date": row["Date"],
-                "rule": "negative_revenue",
-                "severity": "critical",
-                "message": f"Revenue is negative: {row['Revenue']}"
-            })
+    if df["Revenue"].isnull().any():
+        issues.append({
+            "table": "financial_periods",
+            "period": "unknown",
+            "severity": "critical",
+            "issue_type": "missing_revenue",
+            "description": "Revenue missing for one or more periods"
+        })
 
-        # Rule 2: Gross profit consistency
-        expected_gp = row["Revenue"] - row["COGS"]
-        if abs(expected_gp - row["Gross_Profit"]) > 1:
-            issues.append({
-                "period_date": row["Date"],
-                "rule": "gross_profit_mismatch",
-                "severity": "warning",
-                "message": "Gross profit does not equal Revenue - COGS"
-            })
-
-        # Rule 3: Runway sanity check
-        if row["Runway_Months"] < 0:
-            issues.append({
-                "period_date": row["Date"],
-                "rule": "negative_runway",
-                "severity": "critical",
-                "message": "Runway months is negative"
-            })
+    if df["COGS"].isnull().any():
+        issues.append({
+            "table": "financial_periods",
+            "period": "unknown",
+            "severity": "high",
+            "issue_type": "missing_cogs",
+            "description": "COGS missing; margin unreliable"
+        })
 
     return issues
