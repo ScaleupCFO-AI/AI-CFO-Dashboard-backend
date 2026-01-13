@@ -23,6 +23,7 @@ CANONICAL_FIELDS = [
         aliases=[
             "revenue",
             "total revenue",
+            "revenue_total"
             "sales",
             "net sales",
             "turnover"
@@ -34,6 +35,7 @@ CANONICAL_FIELDS = [
         data_type="numeric",
         aliases=[
             "cogs",
+            "cogs_",
             "cost of goods sold",
             "cost of sales"
         ]
@@ -44,6 +46,7 @@ CANONICAL_FIELDS = [
         data_type="numeric",
         aliases=[
             "ebitda",
+            "ebidta_margin"
             "operating profit",
             "operating income"
         ]

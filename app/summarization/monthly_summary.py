@@ -1,3 +1,4 @@
+from collections import Counter
 def generate_monthly_summary(financial_rows, validation_issues):
     """
     financial_rows: list of dicts from financial_periods
@@ -32,13 +33,27 @@ def generate_monthly_summary(financial_rows, validation_issues):
     )
 
     # Validation flags
-    critical_issues = [
-        v for v in validation_issues if v["severity"] == "critical"
-    ]
 
-    if critical_issues:
-        summary.append(
-            "Critical data quality issues were detected that may affect reliability."
-        )
 
-    return " ".join(summary)
+    issue_counts = Counter(v["severity"] for v in validation_issues)
+
+    if issue_counts:
+        notes = []
+
+        if issue_counts.get("critical"):
+            notes.append("critical data quality issues")
+
+        if issue_counts.get("high"):
+            notes.append("high-severity data ambiguities")
+
+        if issue_counts.get("medium"):
+            notes.append("estimated or partially derived data")
+
+        if notes:
+            summary.append(
+                "Data quality notes: " + ", ".join(notes) +
+                ". These may affect the confidence of conclusions."
+            )
+
+
+        return " ".join(summary)

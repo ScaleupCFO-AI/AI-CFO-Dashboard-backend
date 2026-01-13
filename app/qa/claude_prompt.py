@@ -4,20 +4,22 @@ You are an AI CFO.
 Rules you MUST follow:
 1. Answer ONLY using the provided evidence.
 2. Use exact numbers from the evidence.
-3. Cite evidence using [Evidence X].
-4. If the evidence is insufficient or too generic, clearly say so.
-5. Do NOT guess, assume, or hallucinate.
+3. Do NOT reference evidence labels (e.g., do not say "Evidence 1").
+4. Do NOT include citations, brackets, or footnotes in your answer.
+5. If the evidence is insufficient or too generic, clearly say so.
+6. Do NOT guess, assume, or hallucinate.
 
 Tone:
 - Executive-level
 - Clear and concise
-- Actionable where possible
+- Factual, not verbose
 """
+
 
 def build_prompt(question, evidence_blocks):
     evidence_text = "\n\n".join(
-        f"[Evidence {i+1}]\n{block}"
-        for i, block in enumerate(evidence_blocks)
+        f"- {block['summary']}"
+        for block in evidence_blocks
     )
 
     return f"""
@@ -26,11 +28,11 @@ def build_prompt(question, evidence_blocks):
 Question:
 {question}
 
-Evidence:
+Financial Data (use only this information):
 {evidence_text}
 
 Instructions:
-- Answer the question as a CFO would.
-- Cite evidence explicitly.
-- If data is insufficient, say so clearly.
+- Write a clean executive answer.
+- Do not mention where the data came from.
+- The system will display evidence separately.
 """

@@ -7,14 +7,19 @@ from app.embeddings.generate_embedding import generate_embedding
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# same company id as before
-COMPANY_ID = "09b31214-8785-464f-928a-8d2c939db3b8"
 
+def embed_missing_summaries(company_id: str):
+    """
+    Generates and stores embeddings for all summaries of a company
+    that do not yet have embeddings.
 
-def fetch_summaries():
+    Deterministic, idempotent, safe to re-run.
+    """
+
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
+    # 1️⃣ Fetch summaries without embeddings
     cur.execute(
         """
         select id, summary_text
@@ -22,50 +27,39 @@ def fetch_summaries():
         where company_id = %s
           and embedding is null
         """,
-        (COMPANY_ID,)
+        (company_id,)
     )
 
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
+    summaries = cur.fetchall()
 
-    return rows
+    if not summaries:
+        cur.close()
+        conn.close()
+        return 0
 
+    # 2️⃣ Generate + store embeddings
+    for summary_id, summary_text in summaries:
+        embedding = generate_embedding(summary_text)
+        embedding_str = "[" + ",".join(map(str, embedding)) + "]"
 
-def store_embedding(summary_id, embedding):
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-
-    embedding_str = "[" + ",".join(map(str, embedding)) + "]"
-
-    cur.execute(
-        """
-        update financial_summaries
-        set embedding = %s::vector
-        where id = %s
-        """,
-        (embedding_str, summary_id)
-    )
+        cur.execute(
+            """
+            update financial_summaries
+            set embedding = %s::vector
+            where id = %s
+            """,
+            (embedding_str, summary_id)
+        )
 
     conn.commit()
     cur.close()
     conn.close()
 
+    return len(summaries)
 
 
-def main():
-    summaries = fetch_summaries()
-
-    if not summaries:
-        print("No summaries to embed.")
-        return
-
-    for summary_id, summary_text in summaries:
-        embedding = generate_embedding(summary_text)
-        store_embedding(summary_id, embedding)
-
-    print("Embeddings generated and stored.")
-
-
+# Optional CLI usage for backfills / debugging
 if __name__ == "__main__":
-    main()
+    cid = input("Enter company ID: ")
+    count = embed_missing_summaries(cid)
+    print(f"{count} summaries embedded.")

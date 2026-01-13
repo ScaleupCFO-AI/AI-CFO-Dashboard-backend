@@ -8,15 +8,18 @@ from app.summarization.store_summary import store_summary
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# 🔁 Replace with your company_id
-COMPANY_ID = "09b31214-8785-464f-928a-8d2c939db3b8"
 
+def generate_and_store_monthly_summary(company_id: str):
+    """
+    Generates and stores the monthly financial summary for a company.
+    Derived ONLY from canonical SQL facts + validation issues.
+    Deterministic and re-runnable.
+    """
 
-
-def fetch_financials():
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
+    # 1️⃣ Fetch canonical financial facts
     cur.execute(
         """
         select
@@ -31,14 +34,10 @@ def fetch_financials():
         where company_id = %s
         order by period_date asc
         """,
-        (COMPANY_ID,)
+        (company_id,)
     )
 
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return [
+    financial_rows = [
         {
             "period_date": r[0],
             "revenue": float(r[1]),
@@ -48,14 +47,10 @@ def fetch_financials():
             "cash_closing": float(r[5]),
             "runway_months": float(r[6]),
         }
-        for r in rows
+        for r in cur.fetchall()
     ]
 
-
-def fetch_validations():
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-
+    # 2️⃣ Fetch validation issues
     cur.execute(
         """
         select
@@ -66,43 +61,44 @@ def fetch_validations():
         from financial_validations
         where company_id = %s
         """,
-        (COMPANY_ID,)
+        (company_id,)
     )
 
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return [
+    validation_rows = [
         {
             "period_date": r[0],
             "rule": r[1],
             "severity": r[2],
             "message": r[3],
         }
-        for r in rows
+        for r in cur.fetchall()
     ]
 
+    cur.close()
+    conn.close()
 
-def main():
-    financials = fetch_financials()
-    validations = fetch_validations()
-
-    summary_text = generate_monthly_summary(financials, validations)
-
-    if not summary_text:
-        print("No summary generated.")
-        return
-
-    store_summary(
-        company_id=COMPANY_ID,
-        summary_text=summary_text,
-        start_date=financials[0]["period_date"],
-        end_date=financials[-1]["period_date"],
+    # 3️⃣ Generate summary text
+    summary_text = generate_monthly_summary(
+        financial_rows=financial_rows,
+        validation_issues=validation_rows
     )
 
-    print("Financial summary generated and stored.")
+    if not summary_text:
+        return None
+
+    # 4️⃣ Store summary
+    store_summary(
+        company_id=company_id,
+        summary_text=summary_text,
+        start_date=financial_rows[0]["period_date"],
+        end_date=financial_rows[-1]["period_date"],
+    )
+
+    return summary_text
 
 
+# Optional: keep CLI usage for debugging
 if __name__ == "__main__":
-    main()
+    cid = input("Enter company ID: ")
+    generate_and_store_monthly_summary(cid)
+    print("Financial summary generated and stored.")
