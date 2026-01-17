@@ -1,184 +1,114 @@
--- ============================
--- COMPANIES
--- ============================
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
 
-create table companies (
-  -- Internal unique identifier for the company (never exposed to users)
-  id uuid primary key default gen_random_uuid(),
-
-  -- Human-readable company name (display / UI / reporting only)
-  -- NOT used for identity or uniqueness
-  name text not null,
-
-  -- Email domain used as the TRUE company identity using indexing on this for uniqueness
-  -- Example: "restorationhardware.com"
-  -- This allows deterministic company matching across users
-  company_domain text,
-
-  -- Optional industry classification (free-text or later enum)
-  -- Used for agent context, NOT for logic branching
+CREATE TABLE public.companies (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
   industry_code text,
-  base_currency text not null default 'INR',
-
-  -- Month number (1–12) when the fiscal year starts
-  -- Example: 4 = April (India), 1 = January (US)
-  fiscal_year_start_month int not null default 1,
-  created_at timestamp default now()
+  base_currency text NOT NULL DEFAULT 'INR'::text,
+  fiscal_year_start_month integer NOT NULL DEFAULT 1,
+  created_at timestamp without time zone DEFAULT now(),
+  company_domain text CHECK (company_domain IS NULL OR length(company_domain) > 0),
+  CONSTRAINT companies_pkey PRIMARY KEY (id)
 );
-
-add constraint company_domain_not_empty
-check (company_domain is null or length(company_domain) > 0);
-create unique index companies_company_domain_unique
-on companies (company_domain);
-
--- ============================
---  FINANCIAL PERIODS
--- ============================
-
-create table financial_periods (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
-  period_start date not null,
-  period_end date not null,
-  period_type text not null check (period_type in ('month', 'quarter', 'year')),
-  fiscal_year int not null,
-  fiscal_quarter int,
-  created_at timestamp default now(),
-  is_adjustment_period boolean default false,
-  unique (company_id, period_start, period_type)
-);
-
--- ============================
---  STATEMENT TYPES
--- ============================
-
-create table statement_types (
-  id uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  description text
-);
-
-insert into statement_types (name, description) values
-  ('P&L', 'Profit and Loss Statement'),
-  ('Balance Sheet', 'Assets, liabilities, equity'),
-  ('Cash Flow', 'Cash inflows and outflows'),
-  ('KPI', 'Operational and financial KPIs');
-
--- ============================
--- METRIC DEFINITIONS
--- ============================
-
-create table metric_definitions (
-  id uuid primary key default gen_random_uuid(),
-  metric_key text not null unique,
-  display_name text not null,
-  statement_type_id uuid not null references statement_types(id),
-  unit text,              -- currency, %, days, ratio
-  polarity text,          -- higher_is_better / lower_is_better
-  is_derived boolean default false,
-  description text,
-  industry_tags text[],
-  aggregation_type text check (aggregation_type in ('sum','avg','ratio','last')),
-  metric_category text,
-  created_at timestamp default now()
-);
-
--- ============================
--- FINANCIAL FACTS
--- ============================
-
-create table financial_facts (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
-  period_id uuid not null references financial_periods(id) on delete cascade,
-  metric_id uuid not null references metric_definitions(id),
+CREATE TABLE public.financial_facts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  period_id uuid NOT NULL,
+  metric_id uuid NOT NULL,
   value numeric,
   source_system text,
-  confidence_score float,
-  created_at timestamp default now(),
-  unique (company_id, period_id, metric_id)
+  confidence_score double precision,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT financial_facts_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_facts_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT financial_facts_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id),
+  CONSTRAINT financial_facts_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id)
 );
-
--- ============================
--- VALIDATION ISSUES
--- ============================
-
-create table validation_issues (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
-  period_id uuid references financial_periods(id),
-  metric_id uuid references metric_definitions(id),
-  issue_type text not null,
-  severity text not null check (severity in ('low', 'medium', 'high')),
+CREATE TABLE public.financial_periods (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  period_start date NOT NULL,
+  period_end date NOT NULL,
+  period_type text NOT NULL CHECK (period_type = ANY (ARRAY['month'::text, 'quarter'::text, 'year'::text])),
+  fiscal_year integer NOT NULL,
+  fiscal_quarter integer,
+  created_at timestamp without time zone DEFAULT now(),
+  is_adjustment_period boolean DEFAULT false,
+  fiscal_month integer,
+  CONSTRAINT financial_periods_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_periods_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id)
+);
+CREATE TABLE public.financial_summaries (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  period_id uuid,
+  summary_type text NOT NULL,
+  content text NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT financial_summaries_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_summaries_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT financial_summaries_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id)
+);
+CREATE TABLE public.metric_definitions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  metric_key text NOT NULL UNIQUE,
+  display_name text NOT NULL,
+  statement_type_id uuid NOT NULL,
+  unit text,
+  polarity text,
+  is_derived boolean DEFAULT false,
   description text,
-  detected_at timestamp default now(),
-  is_resolved boolean default false,
-  resolved_at timestamp
-
+  industry_tags ARRAY,
+  aggregation_type text CHECK (aggregation_type = ANY (ARRAY['sum'::text, 'avg'::text, 'ratio'::text, 'last'::text])),
+  metric_category text,
+  created_at timestamp without time zone DEFAULT now(),
+  allowed_grains ARRAY NOT NULL DEFAULT '{}'::text[],
+  CONSTRAINT metric_definitions_pkey PRIMARY KEY (id),
+  CONSTRAINT metric_definitions_statement_type_id_fkey FOREIGN KEY (statement_type_id) REFERENCES public.statement_types(id)
 );
-
--- ============================
--- FINANCIAL SUMMARIES
--- ============================
-
-create table financial_summaries (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
-  period_id uuid references financial_periods(id),
-  summary_type text not null,
-  content text not null,
-  created_at timestamp default now()
-);
--- Enforce idempotency for summaries
-create unique index financial_summaries_unique
-on financial_summaries (company_id, period_id, summary_type); --1 summary per(company_id, period_id, summary_type)
-
--- ============================
--- SUMMARY EMBEDDINGS
--- ============================
-
-create table summary_embeddings (
-  id uuid primary key default gen_random_uuid(),
-  summary_id uuid not null references financial_summaries(id) on delete cascade,
-  embedding vector(1536),
-  created_at timestamp default now()
-);
-
-create table source_documents (
-  -- Internal identifier for this upload/job
-  id uuid primary key default gen_random_uuid(),
-
-  -- Company that owns this document
-  company_id uuid not null references companies(id) on delete cascade,
-
-  -- Type of source (csv, excel, zoho, tally, pdf, api)
-  source_type text not null,
-
-  -- Original filename or system name (for display/debug only)
+CREATE TABLE public.source_documents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  source_type text NOT NULL,
   source_name text,
-
-  -- SHA256 hash of file contents (TRUE identity of the file)
-  file_hash text not null,
-
-  -- Ingestion lifecycle status (pipeline progress)
-  ingestion_status text not null default 'uploaded',
-
-  -- Step at which ingestion failed (if any)
+  file_hash text NOT NULL,
+  ingestion_status text NOT NULL DEFAULT 'uploaded'::text,
   ingestion_step text,
-
-  -- Human-readable error message (safe to show user)
   ingestion_error text,
-
-  -- When this file was last processed (for retries/debug)
-  last_processed_at timestamp,
-
-  -- Arbitrary metadata (sheet names, row counts, etc.)
+  last_processed_at timestamp without time zone,
   metadata jsonb,
-
-  -- Audit timestamp
-  uploaded_at timestamp default now(),
-
-  -- Prevent duplicate uploads of the same file for the same company
-  unique (company_id, file_hash)
+  uploaded_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT source_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT source_documents_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id)
 );
-
+CREATE TABLE public.statement_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  description text,
+  CONSTRAINT statement_types_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.summary_embeddings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  summary_id uuid NOT NULL,
+  embedding USER-DEFINED,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT summary_embeddings_pkey PRIMARY KEY (id),
+  CONSTRAINT summary_embeddings_summary_id_fkey FOREIGN KEY (summary_id) REFERENCES public.financial_summaries(id)
+);
+CREATE TABLE public.validation_issues (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  company_id uuid NOT NULL,
+  period_id uuid,
+  metric_id uuid,
+  issue_type text NOT NULL,
+  severity text NOT NULL CHECK (severity = ANY (ARRAY['info'::text, 'low'::text, 'medium'::text, 'high'::text, 'critical'::text])),
+  description text,
+  detected_at timestamp without time zone DEFAULT now(),
+  is_resolved boolean DEFAULT false,
+  resolved_at timestamp without time zone,
+  CONSTRAINT validation_issues_pkey PRIMARY KEY (id),
+  CONSTRAINT validation_issues_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT validation_issues_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id),
+  CONSTRAINT validation_issues_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id)
+);
