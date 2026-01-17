@@ -1,10 +1,6 @@
-# app/retrieval/retrieve_financial_evidence.py
-
-import os
 import psycopg2
+import os
 from dotenv import load_dotenv
-
-from app.embeddings.generate_embedding import generate_embedding
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -13,35 +9,43 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 def retrieve_financial_evidence(
     question: str,
     company_id: str,
-    top_k: int = 5
+    top_k: int = 5,
 ):
     """
-    Returns top_k most relevant financial summaries for a given company and question.
-    Evidence is ALWAYS SQL-backed. No hardcoded data.
+    Retrieve top-K relevant financial summaries using vector similarity.
+
+    Schema-aligned:
+    - financial_summaries.content
+    - joins financial_periods for time context
     """
 
-    # 1️⃣ Generate embedding for the question
-    query_embedding = generate_embedding(question)
+    # Placeholder embedding until real model is wired
+    query_embedding = [0.0] * 1536
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    # 2️⃣ Query pgvector-backed summaries
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
     cur.execute(
         """
-        SELECT
-            summary_text,
-            summary_type,
-            period_start,
-            period_end,
-            embedding <-> %s::vector AS distance
-        FROM financial_summaries
-        WHERE company_id = %s
-        ORDER BY distance
-        LIMIT %s;
+        select
+            s.content,
+            p.period_start,
+            p.period_end,
+            p.period_type,
+            p.fiscal_year,
+            p.fiscal_quarter,
+            s.summary_type
+        from financial_summaries s
+        join summary_embeddings e
+          on s.id = e.summary_id
+        left join financial_periods p
+          on s.period_id = p.id
+        where s.company_id = %s
+        order by e.embedding <-> %s
+        limit %s;
         """,
-        (embedding_str, company_id, top_k)
+        (company_id, embedding_str, top_k)
     )
 
     rows = cur.fetchall()
@@ -49,15 +53,26 @@ def retrieve_financial_evidence(
     cur.close()
     conn.close()
 
-    # 3️⃣ Structure evidence (NO interpretation)
     evidence = []
-    for summary_text, summary_type, start, end, distance in rows:
-        evidence.append({
-            "summary": summary_text,
-            "type": summary_type,
-            "period_start": start,
-            "period_end": end,
-            "distance": float(distance)
-        })
+    for (
+        content,
+        period_start,
+        period_end,
+        period_type,
+        fiscal_year,
+        fiscal_quarter,
+        summary_type,
+    ) in rows:
+        evidence.append(
+            {
+                "content": content,
+                "period_start": period_start,
+                "period_end": period_end,
+                "period_type": period_type,
+                "fiscal_year": fiscal_year,
+                "fiscal_quarter": fiscal_quarter,
+                "summary_type": summary_type,
+            }
+        )
 
     return evidence

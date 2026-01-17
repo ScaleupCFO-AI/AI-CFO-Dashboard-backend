@@ -7,13 +7,16 @@ from app.ingestion.ingest_financial_files import ingest_financial_file
 
 router = APIRouter()
 
+
 @router.post("/upload")
 async def upload_financial_file(
     company_name: str = Form(...),
+    user_email: str = Form(...),      # 🔑 REQUIRED
     file: UploadFile = File(...),
 ):
     print("🔹 /upload called")
     print("Company name:", company_name)
+    print("User email:", user_email)
     print("Filename:", file.filename)
 
     suffix = os.path.splitext(file.filename)[1]
@@ -29,21 +32,25 @@ async def upload_financial_file(
 
         print("Temp file path:", tmp_path)
 
-        company_id = ingest_financial_file(
+        result = ingest_financial_file(
             file_path=tmp_path,
+            user_email=user_email,       # 🔑 PASS IT
             company_name=company_name,
+            source_type="csv",           # explicit, deterministic
+            source_grain="monthly",
         )
 
-        print("Ingestion succeeded. Company ID:", company_id)
+        print("Ingestion succeeded. Company ID:", result["company_id"])
 
         return {
             "status": "success",
-            "company_id": company_id
+            "company_id": result["company_id"],
+            "message": result["message"],
         }
 
     except Exception as e:
         print("❌ ERROR DURING UPLOAD")
-        traceback.print_exc()   # 🔑 THIS IS THE KEY LINE
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
     finally:

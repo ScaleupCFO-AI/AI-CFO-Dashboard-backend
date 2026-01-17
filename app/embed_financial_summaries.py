@@ -2,7 +2,14 @@ import psycopg2
 import os
 from dotenv import load_dotenv
 
-from app.embeddings.generate_embedding import generate_embedding
+
+def generate_embedding(text: str) -> list[float]:
+    """
+    Placeholder deterministic embedding.
+    Replace with real embedding model later.
+    """
+    return [0.0] * 1536
+
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -10,56 +17,57 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def embed_missing_summaries(company_id: str):
     """
-    Generates and stores embeddings for all summaries of a company
-    that do not yet have embeddings.
+    Generate embeddings for summaries that do not yet have one.
 
-    Deterministic, idempotent, safe to re-run.
+    - Reads from financial_summaries.content
+    - Writes to summary_embeddings
+    - Idempotent
     """
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
-    # 1️⃣ Fetch summaries without embeddings
+    # ------------------------------------------------------------
+    # 1. Fetch summaries without embeddings
+    # ------------------------------------------------------------
     cur.execute(
         """
-        select id, summary_text
-        from financial_summaries
-        where company_id = %s
-          and embedding is null
+        select
+            s.id,
+            s.content
+        from financial_summaries s
+        left join summary_embeddings e
+          on s.id = e.summary_id
+        where s.company_id = %s
+          and e.id is null;
         """,
         (company_id,)
     )
 
-    summaries = cur.fetchall()
+    rows = cur.fetchall()
 
-    if not summaries:
+    if not rows:
         cur.close()
         conn.close()
-        return 0
+        return
 
-    # 2️⃣ Generate + store embeddings
-    for summary_id, summary_text in summaries:
-        embedding = generate_embedding(summary_text)
-        embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+    # ------------------------------------------------------------
+    # 2. Generate and store embeddings
+    # ------------------------------------------------------------
+    for summary_id, content in rows:
+        embedding = generate_embedding(content)
 
         cur.execute(
             """
-            update financial_summaries
-            set embedding = %s::vector
-            where id = %s
+            insert into summary_embeddings (
+                summary_id,
+                embedding
+            )
+            values (%s, %s);
             """,
-            (embedding_str, summary_id)
+            (summary_id, embedding)
         )
 
     conn.commit()
     cur.close()
     conn.close()
-
-    return len(summaries)
-
-
-# Optional CLI usage for backfills / debugging
-if __name__ == "__main__":
-    cid = input("Enter company ID: ")
-    count = embed_missing_summaries(cid)
-    print(f"{count} summaries embedded.")

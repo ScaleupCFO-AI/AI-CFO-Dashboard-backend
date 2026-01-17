@@ -21,14 +21,14 @@ def score_match(source_col, alias):
 
 
 def map_columns(source_columns, canonical_fields, min_score=60):
-    mappings = {}
-    unmapped = []
+    mapped = []
     ambiguous = []
+    unmapped = []
 
-    reverse_map = {}  # canonical_field -> source columns
+    reverse_map = {}
 
     for src in source_columns:
-        best_field = None
+        best_matches = []
         best_score = 0
 
         for field in canonical_fields:
@@ -36,77 +36,72 @@ def map_columns(source_columns, canonical_fields, min_score=60):
                 score = score_match(src, alias)
                 if score > best_score:
                     best_score = score
-                    best_field = field
+                    best_matches = [field.name]
+                elif score == best_score and score >= min_score:
+                    best_matches.append(field.name)
 
-        if best_score >= min_score:
-            reverse_map.setdefault(best_field.name, []).append(src)
-        else:
+        if best_score < min_score:
             unmapped.append(src)
-
-    # Resolve ambiguity
-    for canonical_field, src_cols in reverse_map.items():
-        if len(src_cols) == 1:
-            mappings[src_cols[0]] = canonical_field
+        elif len(best_matches) == 1:
+            mapped.append({
+                "raw_column": src,
+                "canonical_field": best_matches[0],
+            })
         else:
-            ambiguous.extend(src_cols)
+            ambiguous.append({
+                "raw_column": src,
+                "candidates": best_matches,
+            })
 
-    return mappings, unmapped, ambiguous
+    return mapped, ambiguous, unmapped
 
 
 def normalize_columns(raw_df, canonical_fields, source_metadata):
     source_columns = list(raw_df.columns)
 
-    mappings, unmapped, ambiguous = map_columns(
+    mapped, ambiguous, unmapped = map_columns(
         source_columns,
         canonical_fields
     )
 
-    canonical_df = raw_df.rename(columns=mappings)
+    rename_map = {
+        m["raw_column"]: m["canonical_field"]
+        for m in mapped
+    }
+
+    canonical_df = raw_df.rename(columns=rename_map)
 
     issues = []
 
-    # 🔹 Unmapped columns → informational
     for col in unmapped:
         issues.append({
             "issue_type": "unmapped_column",
             "column": col,
             "severity": Severity.INFO.value,
-            "reason": "Column not part of canonical financial schema"
+            "description": "Column not part of canonical schema",
         })
 
-    # 🔹 Ambiguous columns → high severity (never guess)
-    for col in ambiguous:
+    for amb in ambiguous:
         issues.append({
             "issue_type": "ambiguous_column",
-            "column": col,
-            "severity": Severity.HIGH.value,
-            "reason": "Column meaning ambiguous; manual resolution required"
+            "column": amb["raw_column"],
+            "severity": Severity.MEDIUM.value,
+            "description": f"Ambiguous mapping candidates: {amb['candidates']}",
         })
 
-    # 🔹 Missing required canonical fields
-    for field in canonical_fields:
-        if field.required and field.name not in canonical_df.columns:
-            issues.append({
-                "issue_type": "missing_required_field",
-                "column": field.name,
-                "severity": Severity.CRITICAL.value,
-                "reason": "Required financial field missing after normalization"
-            })
-
-    # 🔹 Provenance flags (confidence only)
     provenance_flags = detect_provenance_flags(source_metadata)
-
     for flag in provenance_flags:
         issues.append({
             "issue_type": "provenance_flag",
-            "flag": flag,
             "severity": Severity.MEDIUM.value,
-            "reason": f"Data marked as {flag}"
+            "description": f"Data marked as {flag}",
         })
 
     report = {
-        "column_mapping": mappings,
-        "issues": issues
+        "mapped": mapped,
+        "ambiguous": ambiguous,
+        "unmapped": unmapped,
+        "issues": issues,
     }
 
     return canonical_df, report

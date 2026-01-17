@@ -1,5 +1,4 @@
 import psycopg2
-import uuid
 import os
 from dotenv import load_dotenv
 
@@ -7,37 +6,63 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+def extract_domain(email: str) -> str:
+    """
+    Extracts domain from email.
+    Example: finance@acme.com → acme.com
+    """
+    return email.split("@")[-1].lower().strip()
+
+
 def ensure_company_exists(
-    company_name: str,
-    source: str = "manual_upload"
+    company_email: str,
+    company_name: str | None = None,
+    industry_code: str | None = None,
+    base_currency: str = "INR",
+    fiscal_year_start_month: int = 4,
 ) -> str:
     """
     Returns company_id.
-    Creates company if it does not exist.
+    Company identity is determined by email domain.
     Deterministic + idempotent.
     """
+
+    company_domain = extract_domain(company_email)
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
-    # 1️⃣ Check if company already exists
+    # 1️⃣ Check if company already exists by domain
     cur.execute(
-        "SELECT id FROM companies WHERE name = %s;",
-        (company_name,)
+        "select id from companies where company_domain = %s;",
+        (company_domain,)
     )
     row = cur.fetchone()
 
     if row:
         company_id = row[0]
     else:
-        company_id = str(uuid.uuid4())
         cur.execute(
             """
-            INSERT INTO companies (id, name, source)
-            VALUES (%s, %s, %s);
+            insert into companies (
+                name,
+                company_domain,
+                industry_code,
+                base_currency,
+                fiscal_year_start_month
+            )
+            values (%s, %s, %s, %s, %s)
+            returning id;
             """,
-            (company_id, company_name, source)
+            (
+                company_name or company_domain,
+                company_domain,
+                industry_code,
+                base_currency,
+                fiscal_year_start_month,
+            )
         )
+        company_id = cur.fetchone()[0]
         conn.commit()
 
     cur.close()
