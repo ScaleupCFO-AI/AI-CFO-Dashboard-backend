@@ -75,7 +75,9 @@ def get_or_create_period(
     period_type,
     fiscal_year,
     fiscal_quarter,
+    fiscal_month,
 ):
+
     """
     Period uniqueness = (company_id, period_start, period_type)
     """
@@ -100,9 +102,10 @@ def get_or_create_period(
             period_end,
             period_type,
             fiscal_year,
-            fiscal_quarter
+            fiscal_quarter,
+            fiscal_month
         )
-        values (%s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s)
         returning id;
         """,
         (
@@ -112,6 +115,7 @@ def get_or_create_period(
             period_type,
             fiscal_year,
             fiscal_quarter,
+            fiscal_month
         ),
     )
     return cur.fetchone()[0]

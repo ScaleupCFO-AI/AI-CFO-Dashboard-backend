@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import calendar
 
 
@@ -27,6 +27,44 @@ MONTH_NAME_TO_INDEX = {
     "nov": 11, "november": 11,
     "dec": 12, "december": 12,
 }
+from datetime import date, datetime
+
+
+def extract_calendar_month(value) -> int:
+    """
+    Extract calendar month (1–12) from:
+    - date / datetime
+    - ISO date string (YYYY-MM-DD)
+    - strings like 'Apr-2024', 'April 2024', 'Apr'
+    """
+
+    # Case 1: date / datetime
+    if isinstance(value, (date, datetime)):
+        return value.month
+
+    # Case 2: string
+    if isinstance(value, str):
+        v = value.strip()
+
+        # Try ISO date
+        try:
+            dt = datetime.fromisoformat(v)
+            return dt.month
+        except ValueError:
+            pass
+
+        # Try month name
+        key = v.lower().split()[0]
+        if key in MONTH_NAME_TO_INDEX:
+            return MONTH_NAME_TO_INDEX[key]
+
+        # Try 'Apr-2024'
+        parts = v.replace("-", " ").split()
+        for p in parts:
+            if p.lower() in MONTH_NAME_TO_INDEX:
+                return MONTH_NAME_TO_INDEX[p.lower()]
+
+    raise ValueError(f"Cannot extract month from value: {value}")
 
 
 def normalize_month(value) -> int:
@@ -170,6 +208,78 @@ def parse_fiscal_year(value) -> int:
         return int(value.replace("FY", ""))
 
     return int(value)
+
+
+
+def derive_fiscal_year_from_date(
+    value,
+    fiscal_year_start_month: int,
+) -> int:
+    """
+    Deterministically derive fiscal year from a date-like value.
+
+    Accepts:
+    - datetime.date
+    - datetime.datetime
+    - ISO date string (YYYY-MM-DD)
+    - strings like 'Apr-2024', 'April 2024'
+
+    Returns:
+    - fiscal_year (int)
+
+    Raises:
+    - ValueError if derivation is impossible
+    """
+
+    calendar_year = None
+    calendar_month = None
+
+    # -----------------------------
+    # Case 1: date / datetime object
+    # -----------------------------
+    if isinstance(value, (date, datetime)):
+        calendar_year = value.year
+        calendar_month = value.month
+
+    # -----------------------------
+    # Case 2: string input
+    # -----------------------------
+    elif isinstance(value, str):
+        v = value.strip()
+
+        # Try ISO format first
+        try:
+            dt = datetime.fromisoformat(v)
+            calendar_year = dt.year
+            calendar_month = dt.month
+        except ValueError:
+            pass
+
+        # Try "Apr-2024", "April 2024"
+        if calendar_year is None:
+            parts = v.replace("_", " ").replace("-", " ").split()
+            for p in parts:
+                p_lower = p.lower()
+                if p_lower in MONTH_NAME_TO_INDEX:
+                    calendar_month = MONTH_NAME_TO_INDEX[p_lower]
+                elif p.isdigit() and len(p) == 4:
+                    calendar_year = int(p)
+
+    # -----------------------------
+    # Validate extraction
+    # -----------------------------
+    if calendar_year is None or calendar_month is None:
+        raise ValueError(
+            f"Cannot derive fiscal year from value: {value}"
+        )
+
+    # -----------------------------
+    # Fiscal year boundary logic
+    # -----------------------------
+    if calendar_month >= fiscal_year_start_month:
+        return calendar_year
+    else:
+        return calendar_year - 1
 
 
 def parse_fiscal_quarter(value):

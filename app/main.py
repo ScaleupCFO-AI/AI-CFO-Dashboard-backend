@@ -17,6 +17,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 
 app.include_router(health_router)

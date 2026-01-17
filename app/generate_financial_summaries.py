@@ -3,6 +3,9 @@ import psycopg2
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import calendar
+import logging
+
+logger = logging.getLogger("summaries")
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -29,7 +32,6 @@ def generate_and_store_monthly_summary(company_id: str):
             p.period_start,
             p.period_end,
             p.fiscal_year,
-            p.fiscal_quarter,
             m.display_name,
             f.value
         from financial_facts f
@@ -58,7 +60,6 @@ def generate_and_store_monthly_summary(company_id: str):
         start,
         end,
         fiscal_year,
-        month_index,  # reused fiscal_quarter field
         metric_name,
         value,
     ) in rows:
@@ -68,7 +69,6 @@ def generate_and_store_monthly_summary(company_id: str):
                 "start": start,
                 "end": end,
                 "fiscal_year": fiscal_year,
-                "month": month_index,
                 "metrics": [],
             }
 
@@ -80,14 +80,11 @@ def generate_and_store_monthly_summary(company_id: str):
     for period_id, data in sorted(
         periods.items(), key=lambda x: x[1]["start"]
     ):
-        month_name = (
-            calendar.month_name[data["month"]]
-            if data["month"] and 1 <= data["month"] <= 12
-            else "Unknown Month"
-        )
+        month_name = calendar.month_name[data["start"].month]
+        year = data["start"].year
 
         lines = [
-            f"Financial summary for {month_name} {data['fiscal_year']} "
+            f"Financial summary for {month_name} {year} "
             f"({data['start']} to {data['end']})."
         ]
 
@@ -95,6 +92,16 @@ def generate_and_store_monthly_summary(company_id: str):
             lines.append(f"- {name}: {value}")
 
         summary_text = "\n".join(lines)
+
+        logger.info(
+            "Financial summary generated",
+            extra={
+                "company_id": str(company_id),
+                "summary_type": "monthly",
+                "period_start": str(data["start"]),
+                "period_end": str(data["end"]),
+            },
+        )
 
         # --------------------------------------------------------
         # 4. Upsert summary
