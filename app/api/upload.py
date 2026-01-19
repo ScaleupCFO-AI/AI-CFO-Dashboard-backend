@@ -4,6 +4,7 @@ import os
 import traceback
 
 from app.ingestion.ingest_financial_files import ingest_financial_file
+from app.queries.fetch_recent_summaries import fetch_recent_summaries
 
 router = APIRouter()
 
@@ -42,16 +43,30 @@ async def upload_financial_file(
 
         print("Ingestion succeeded. Company ID:", result["company_id"])
 
+        summaries = fetch_recent_summaries(result["company_id"], limit=5)
+
         return {
             "status": "success",
             "company_id": result["company_id"],
             "message": result["message"],
+            "preview": {
+                "summaries_generated": summaries
+            }
         }
+    
 
     except Exception as e:
         print("❌ ERROR DURING UPLOAD")
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(e))
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": e.__class__.__name__,
+                "message": str(e) or "Unknown error",
+            },
+        )
+
 
     finally:
         if "tmp_path" in locals() and os.path.exists(tmp_path):
