@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
+import asyncio
 
 from app.qa.answer_financial_question import answer_question
 
@@ -12,15 +13,18 @@ class QueryRequest(BaseModel):
 
 
 @router.post("/query")
-def query_financials(request: QueryRequest):
+async def query_financials(request: QueryRequest):
     """
     Executes a data-grounded financial query.
 
-    - Uses SQL-derived summaries
+    Guarantees:
+    - SQL-backed summaries only
     - Evidence-first
     - No business logic in API layer
+    - Deterministic charts
     """
-    return answer_question(
+
+    return await answer_question(
         question=request.question,
         company_id=request.company_id
     )

@@ -4,6 +4,7 @@ import os
 import traceback
 
 from app.ingestion.ingest_financial_files import ingest_financial_file
+from app.queries.fetch_recent_facts import fetch_recent_facts
 from app.queries.fetch_recent_summaries import fetch_recent_summaries
 
 router = APIRouter()
@@ -43,6 +44,7 @@ async def upload_financial_file(
 
         print("Ingestion succeeded. Company ID:", result["company_id"])
 
+        facts = fetch_recent_facts(result["company_id"], limit=20)
         summaries = fetch_recent_summaries(result["company_id"], limit=5)
 
         return {
@@ -50,9 +52,11 @@ async def upload_financial_file(
             "company_id": result["company_id"],
             "message": result["message"],
             "preview": {
-                "summaries_generated": summaries
-            }
+                "facts_inserted": facts,
+                "summaries_generated": summaries,
+            },
         }
+
     
 
     except Exception as e:

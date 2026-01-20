@@ -71,6 +71,63 @@ CANONICAL_FIELDS: List[CanonicalField] = [
             "operating income",
         ],
     ),
+    CanonicalField(
+    name="cash_balance",
+    required=False,
+    data_type="numeric",
+    aliases=[
+        "cash_balance",
+        "cash",
+        "closing_cash",
+        "ending_cash",
+        "bank_balance",
+    ],
+    ),
+    CanonicalField(
+        name="cash_balance",
+        required=False,
+        data_type="numeric",
+        aliases=["cash balance", "ending cash", "closing cash"]
+    ),
+
+    CanonicalField(
+        name="operating_expense",
+        required=False,
+        data_type="numeric",
+        aliases=["opex", "operating expense", "operating expenses"]
+    ),
+
+    CanonicalField(
+        name="net_profit",
+        required=False,
+        data_type="numeric",
+        aliases=["net profit", "profit after tax", "net income"]
+    ),
+    CanonicalField(
+    name="operating_expense",
+    required=False,
+    data_type="numeric",
+    aliases=[
+        "operating expense",
+        "operating expenses",
+        "opex",
+        "operating cost",
+        "operating costs",
+    ],
+),
+    CanonicalField(
+    name="net_profit",
+    required=False,
+    data_type="numeric",
+    aliases=[
+        "net profit",
+        "profit",
+        "net income",
+        "earnings",
+    ],
+),
+
+
 ]
 
 
@@ -94,17 +151,25 @@ CANONICAL_FIELD_NAMES: Set[str] = set(CANONICAL_FIELD_BY_NAME.keys())
 
 # Global expectations (apply to all companies)
 EXPECTED_METRICS_GLOBAL = {
-    "pnl": {
+        "pnl": {
         "revenue",
+        "cogs",
+        "gross_margin",
+        "operating_expense",
         "ebitda",
-    },
-    "balance_sheet": {
-        "cash",
-        "total_assets",
-        "total_liabilities",
+        "net_profit",
     },
     "cash_flow": {
-        "net_cash_flow",
+        "cash_balance",
+        "operating_cash_flow",
+        "burn_rate",
+        "runway",
+    },
+    "balance_sheet": {
+        "total_assets",
+        "total_liabilities",
+        "equity",
+        "working_capital",
     },
 }
 

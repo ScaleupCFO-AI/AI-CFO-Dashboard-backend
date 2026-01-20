@@ -33,17 +33,9 @@ STYLE RULES:
 
 
 
-def build_prompt(question, evidence_blocks):
+def build_prompt(question, evidence_blocks, statements):
     """
-    Build the LLM prompt using retrieved financial summaries.
-
-    Expected evidence block structure:
-    {
-        "content": str,
-        "period_start": date | None,
-        "period_end": date | None,
-        "summary_type": str
-    }
+    statements: ordered list like ["pnl", "cash_flow"]
     """
 
     evidence_text = "\n\n".join(
@@ -52,8 +44,15 @@ def build_prompt(question, evidence_blocks):
         if block.get("content")
     )
 
+    statement_context = ", ".join(statements)
+
     return f"""
 {SYSTEM_PROMPT}
+
+Context (non-negotiable):
+- This question pertains to the following financial statements:
+  {statement_context}
+- Do NOT use concepts or metrics outside these statements.
 
 Question:
 {question}

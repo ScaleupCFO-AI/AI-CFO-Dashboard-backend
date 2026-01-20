@@ -250,8 +250,10 @@ def derive_fiscal_year_from_date(
         # Try ISO format first
         try:
             dt = datetime.fromisoformat(v)
+            print("DEBUG — derived dt from ISO:", dt)
             calendar_year = dt.year
             calendar_month = dt.month
+            print("DEBUG — derived dt from ISO:", dt.year, dt.month)
         except ValueError:
             pass
 

@@ -25,7 +25,7 @@ from app.normalization.schema_definitions import CANONICAL_FIELDS
 from app.validations.metric_completeness import check_missing_expected_metrics
 from app.validations.metric_completeness import check_missing_expected_metrics
 from app.validations.store_issues import store_validation_issues
-from app.generate_financial_summaries import generate_and_store_monthly_summary
+from app.generate_financial_summaries import (generate_and_store_monthly_summary, generate_and_store_quarterly_uploaded_summary, generate_and_store_yearly_uploaded_summary)
 from app.embed_financial_summaries import embed_missing_summaries
 
 load_dotenv()
@@ -149,8 +149,11 @@ def ingest_financial_file(
             "is_estimated": is_estimated,
         },
         canonical_metrics=canonical_metrics,
-        llm_mapper=llm_column_mapper,  # No LLM assistance for now
+        # llm_mapper=llm_column_mapper,  # No LLM assistance for now
     )
+# TEMP FIX: derive period month from canonical period_date
+    if "period_date" in canonical_df.columns:
+        canonical_df["_period_month"] = canonical_df["period_date"]
 
     for col in ["_period_month", "_period_quarter", "_period_fiscal_year"]:
         canonical_df[col] = raw_df[col]
@@ -293,6 +296,8 @@ def ingest_financial_file(
     # 7. Generate summaries
     # ------------------------------------------------------------
     generate_and_store_monthly_summary(company_id)
+    generate_and_store_quarterly_uploaded_summary(company_id)
+    generate_and_store_yearly_uploaded_summary(company_id)
 
     # ------------------------------------------------------------
     # 8. Generate embeddings

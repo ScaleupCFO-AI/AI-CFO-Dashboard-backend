@@ -132,3 +132,248 @@ def generate_and_store_monthly_summary(company_id: str):
     conn.commit()
     cur.close()
     conn.close()
+
+def generate_and_store_quarterly_uploaded_summary(company_id: str):
+    """
+    Deterministic summaries for uploaded quarterly data only.
+    - Reads facts with period_type = 'quarter'
+    - NO aggregation
+    - NO inference
+    - Idempotent
+    """
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    # ------------------------------------------------------------
+    # 1. Fetch quarterly facts
+    # ------------------------------------------------------------
+    cur.execute(
+        """
+        select
+            p.id,
+            p.period_start,
+            p.period_end,
+            p.fiscal_year,
+            p.fiscal_quarter,
+            m.display_name,
+            f.value
+        from financial_facts f
+        join financial_periods p on f.period_id = p.id
+        join metric_definitions m on f.metric_id = m.id
+        where p.company_id = %s
+          and p.period_type = 'quarter'
+        order by p.period_start asc;
+        """,
+        (company_id,),
+    )
+
+    rows = cur.fetchall()
+    if not rows:
+        cur.close()
+        conn.close()
+        return
+
+    # ------------------------------------------------------------
+    # 2. Group by period
+    # ------------------------------------------------------------
+    periods = {}
+
+    for (
+        period_id,
+        start,
+        end,
+        fiscal_year,
+        fiscal_quarter,
+        metric_name,
+        value,
+    ) in rows:
+
+        if period_id not in periods:
+            periods[period_id] = {
+                "start": start,
+                "end": end,
+                "fiscal_year": fiscal_year,
+                "quarter": fiscal_quarter,
+                "metrics": [],
+            }
+
+        periods[period_id]["metrics"].append((metric_name, value))
+
+    # ------------------------------------------------------------
+    # 3. Generate summaries
+    # ------------------------------------------------------------
+    for period_id, data in periods.items():
+
+        header = f"Financial summary based on uploaded quarterly data for Q{data['quarter']} FY{data['fiscal_year']}"
+
+        if data["start"] and data["end"]:
+            header += f" ({data['start']} to {data['end']})."
+        else:
+            header += "."
+
+        lines = [header]
+
+        for name, value in data["metrics"]:
+            lines.append(f"- {name}: {value}")
+
+        summary_text = "\n".join(lines)
+
+        logger.info(
+            "Quarterly uploaded summary generated",
+            extra={
+                "company_id": str(company_id),
+                "period_id": str(period_id),
+            },
+        )
+
+        # --------------------------------------------------------
+        # 4. Upsert summary
+        # --------------------------------------------------------
+        cur.execute(
+            """
+            insert into financial_summaries (
+                company_id,
+                period_id,
+                summary_type,
+                content,
+                created_at
+            )
+            values (%s, %s, 'quarterly_uploaded', %s, %s)
+            on conflict (company_id, period_id, summary_type)
+            do update set
+                content = excluded.content,
+                created_at = excluded.created_at;
+            """,
+            (
+                company_id,
+                period_id,
+                summary_text,
+                datetime.now(timezone.utc),
+            ),
+        )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def generate_and_store_yearly_uploaded_summary(company_id: str):
+    """
+    Deterministic summaries for uploaded yearly data only.
+    - Reads facts with period_type = 'year'
+    - NO aggregation
+    - NO inference
+    - Idempotent
+    """
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    # ------------------------------------------------------------
+    # 1. Fetch yearly facts
+    # ------------------------------------------------------------
+    cur.execute(
+        """
+        select
+            p.id,
+            p.period_start,
+            p.period_end,
+            p.fiscal_year,
+            m.display_name,
+            f.value
+        from financial_facts f
+        join financial_periods p on f.period_id = p.id
+        join metric_definitions m on f.metric_id = m.id
+        where p.company_id = %s
+          and p.period_type = 'year'
+        order by p.period_start asc;
+        """,
+        (company_id,),
+    )
+
+    rows = cur.fetchall()
+    if not rows:
+        cur.close()
+        conn.close()
+        return
+
+    # ------------------------------------------------------------
+    # 2. Group by period
+    # ------------------------------------------------------------
+    periods = {}
+
+    for (
+        period_id,
+        start,
+        end,
+        fiscal_year,
+        metric_name,
+        value,
+    ) in rows:
+
+        if period_id not in periods:
+            periods[period_id] = {
+                "start": start,
+                "end": end,
+                "fiscal_year": fiscal_year,
+                "metrics": [],
+            }
+
+        periods[period_id]["metrics"].append((metric_name, value))
+
+    # ------------------------------------------------------------
+    # 3. Generate summaries
+    # ------------------------------------------------------------
+    for period_id, data in periods.items():
+
+        header = f"Financial summary based on uploaded yearly data for FY{data['fiscal_year']}"
+
+        if data["start"] and data["end"]:
+            header += f" ({data['start']} to {data['end']})."
+        else:
+            header += "."
+
+        lines = [header]
+
+        for name, value in data["metrics"]:
+            lines.append(f"- {name}: {value}")
+
+        summary_text = "\n".join(lines)
+
+        logger.info(
+            "Yearly uploaded summary generated",
+            extra={
+                "company_id": str(company_id),
+                "period_id": str(period_id),
+            },
+        )
+
+        # --------------------------------------------------------
+        # 4. Upsert summary
+        # --------------------------------------------------------
+        cur.execute(
+            """
+            insert into financial_summaries (
+                company_id,
+                period_id,
+                summary_type,
+                content,
+                created_at
+            )
+            values (%s, %s, 'yearly_uploaded', %s, %s)
+            on conflict (company_id, period_id, summary_type)
+            do update set
+                content = excluded.content,
+                created_at = excluded.created_at;
+            """,
+            (
+                company_id,
+                period_id,
+                summary_text,
+                datetime.now(timezone.utc),
+            ),
+        )
+
+    conn.commit()
+    cur.close()
+    conn.close()
