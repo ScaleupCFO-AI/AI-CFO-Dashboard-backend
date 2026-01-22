@@ -1,10 +1,11 @@
 import os
 from datetime import datetime, timezone
+from collections import defaultdict
 
 import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
-from collections import defaultdict
+
 from app.ingestion.ingest_company import ensure_company_exists
 from app.ingestion.ingestion_helpers import (
     compute_file_hash,
@@ -16,16 +17,16 @@ from app.ingestion.period_derivation import (
     derive_fiscal_year_from_date,
     derive_period_dates,
     extract_calendar_month,
-    parse_fiscal_year,
-    parse_fiscal_quarter,
 )
 from app.normalization.column_mapper import normalize_columns
-from app.normalization.llm_column_mapper import llm_column_mapper
 from app.normalization.schema_definitions import CANONICAL_FIELDS
 from app.validations.metric_completeness import check_missing_expected_metrics
-from app.validations.metric_completeness import check_missing_expected_metrics
 from app.validations.store_issues import store_validation_issues
-from app.generate_financial_summaries import (generate_and_store_monthly_summary, generate_and_store_quarterly_uploaded_summary, generate_and_store_yearly_uploaded_summary)
+from app.generate_financial_summaries import (
+    generate_and_store_monthly_summary,
+    generate_and_store_quarterly_uploaded_summary,
+    generate_and_store_yearly_uploaded_summary,
+)
 from app.embed_financial_summaries import embed_missing_summaries
 
 load_dotenv()
@@ -41,7 +42,12 @@ def ingest_financial_file(
     is_estimated: bool = False,
 ):
     """
-    Canonical, resumable ingestion pipeline.
+    Canonical, deterministic ingestion pipeline.
+
+    GUARANTEES:
+    - period_date is the single source of truth for time
+    - only metrics in metric_definitions are ingested
+    - no LLM required for date parsing
     """
 
     # ------------------------------------------------------------
@@ -56,26 +62,43 @@ def ingest_financial_file(
     cur = conn.cursor()
 
     # ------------------------------------------------------------
-    # Fetch fiscal year start month
+    # Fetch fiscal year start month + industry
     # ------------------------------------------------------------
     cur.execute(
-    """
-    select fiscal_year_start_month, industry_code
-    from companies
-    where id = %s;
-    """,
-    (company_id,),
+        """
+        SELECT fiscal_year_start_month, industry_code
+        FROM companies
+        WHERE id = %s;
+        """,
+        (company_id,),
     )
     fiscal_year_start_month, industry_code = cur.fetchone()
 
-
     # ------------------------------------------------------------
-    # Fetch KPI statement type id ONCE
+    # Fetch canonical metrics registry (REQUIRED)
     # ------------------------------------------------------------
     cur.execute(
-        "select id from statement_types where name = 'KPI';"
+        """
+        SELECT
+            metric_key,
+            statement_type_id,
+            aggregation_type,
+            is_derived,
+            allowed_grains
+        FROM metric_definitions;
+        """
     )
-    kpi_statement_type_id = cur.fetchone()[0]
+
+    canonical_metrics = [
+        {
+            "metric_key": row[0],
+            "statement_type_id": row[1],
+            "aggregation_type": row[2],
+            "is_derived": row[3],
+            "allowed_grains": row[4],
+        }
+        for row in cur.fetchall()
+    ]
 
     # ------------------------------------------------------------
     # 1. Register source document
@@ -89,8 +112,6 @@ def ingest_financial_file(
         source_type=source_type,
         source_name=os.path.basename(file_path),
     )
-
-    source_document_id = source_doc["id"]
 
     if source_doc["status"] == "completed":
         cur.close()
@@ -108,38 +129,8 @@ def ingest_financial_file(
         raise ValueError("Unsupported file type")
 
     # ------------------------------------------------------------
-    # 3. Extract period identity (RAW)
+    # 3. Normalize columns (STRICT)
     # ------------------------------------------------------------
-    raw_df["_period_month"] = raw_df.get("Month")
-    raw_df["_period_quarter"] = raw_df.get("Quarter")
-    raw_df["_period_fiscal_year"] = raw_df.get("Fiscal_Year")
-
-    # ------------------------------------------------------------
-    # 4. Normalize columns
-    # ------------------------------------------------------------
-    cur.execute(
-    """
-    select
-        metric_key,
-        statement_type_id,
-        aggregation_type,
-        is_derived,
-        allowed_grains
-    from metric_definitions;
-    """
-    )
-
-    canonical_metrics = [
-        {
-            "metric_key": row[0],
-            "statement_type_id": row[1],
-            "aggregation_type": row[2],
-            "is_derived": row[3],
-            "allowed_grains": row[4],
-        }
-        for row in cur.fetchall()
-    ]
-
     canonical_df, report = normalize_columns(
         raw_df,
         CANONICAL_FIELDS,
@@ -148,62 +139,56 @@ def ingest_financial_file(
             "source_grain": source_grain,
             "is_estimated": is_estimated,
         },
-        canonical_metrics=canonical_metrics,
-        # llm_mapper=llm_column_mapper,  # No LLM assistance for now
+        canonical_metrics=canonical_metrics,  # ✅ FIX
     )
-# TEMP FIX: derive period month from canonical period_date
-    if "period_date" in canonical_df.columns:
-        canonical_df["_period_month"] = canonical_df["period_date"]
-
-    for col in ["_period_month", "_period_quarter", "_period_fiscal_year"]:
-        canonical_df[col] = raw_df[col]
 
     store_validation_issues(company_id, report.get("issues", []))
-    # ------------------------------------------------------------
-    # 4.5 Detect missing expected metrics (SOFT validation)
-    # ------------------------------------------------------------
 
-    # All canonical metric columns present after normalization
+    # ------------------------------------------------------------
+    # HARD GUARANTEE: period_date
+    # ------------------------------------------------------------
+    if "period_date" not in canonical_df.columns:
+        raise ValueError("period_date is required for ingestion")
+
+    # ------------------------------------------------------------
+    # 4. Soft metric completeness validation
+    # ------------------------------------------------------------
     present_metrics = {
         normalize_metric_key(col)
         for col in canonical_df.columns
-        if not col.startswith("_")
+        if col != "period_date"
     }
+
     cur.execute(
-    """
-    select
-        md.metric_key,
-        st.name as statement_name
-    from metric_definitions md
-    join statement_types st
-      on md.statement_type_id = st.id
-    where md.metric_key = any(%s);
-    """,
-    (list(present_metrics),)
+        """
+        SELECT md.metric_key, st.name
+        FROM metric_definitions md
+        JOIN statement_types st ON md.statement_type_id = st.id
+        WHERE md.metric_key = ANY(%s);
+        """,
+        (list(present_metrics),),
     )
 
     metric_to_statement = dict(cur.fetchall())
-
     present_metrics_by_statement = defaultdict(set)
 
     for metric_key, statement_name in metric_to_statement.items():
         present_metrics_by_statement[statement_name.lower()].add(metric_key)
 
-    missing_metric_issues = []
-
-    for statement_name, present_metrics in present_metrics_by_statement.items():
-        missing_metric_issues = check_missing_expected_metrics(
-            statement_type=statement_name,   # comes from DB
-            present_metrics=present_metrics,
-            industry=industry_code,       # also from DB
+    for statement_name, metrics in present_metrics_by_statement.items():
+        issues = check_missing_expected_metrics(
+            statement_type=statement_name,
+            present_metrics=metrics,
+            industry=industry_code,
         )
-    store_validation_issues(company_id, missing_metric_issues)
-
-
+        store_validation_issues(company_id, issues)
 
     # ------------------------------------------------------------
-    # 5. Period type
+    # 5. Determine period type
     # ------------------------------------------------------------
+    if source_grain not in {"monthly", "quarter", "year"}:
+        raise ValueError(f"Unsupported source_grain: {source_grain}")
+
     period_type = (
         "month" if source_grain == "monthly"
         else "quarter" if source_grain == "quarter"
@@ -211,44 +196,35 @@ def ingest_financial_file(
     )
 
     # ------------------------------------------------------------
-    # 6. Insert facts
+    # 6. Insert financial facts
     # ------------------------------------------------------------
     for _, row in canonical_df.iterrows():
 
-        if row["_period_fiscal_year"] is not None:
-            fiscal_year = parse_fiscal_year(row["_period_fiscal_year"])
-        else:
-            # Fallback: derive from month/date
-            fiscal_year = derive_fiscal_year_from_date(
-                value=row["_period_month"],
-                fiscal_year_start_month=fiscal_year_start_month,
-            )
-        # -----------------------------
-        # 🔹 Grain-correct assignment
-        # -----------------------------
-        if period_type == "month":
-            fiscal_month = extract_calendar_month(row["_period_month"])
-            fiscal_quarter = None
+        period_date = row["period_date"]
 
-        elif period_type == "quarter":
-            fiscal_quarter = parse_fiscal_quarter(row["_period_quarter"])
-            fiscal_month = None
-
-        else:  # year
-            fiscal_month = None
-            fiscal_quarter = None
-
-        # -----------------------------
-        # Derive period dates
-        # -----------------------------
-        period_start, period_end = derive_period_dates(
-        period_type=period_type,
-        fiscal_year=fiscal_year,
-        fiscal_quarter=fiscal_quarter,
-        fiscal_month=fiscal_month,
-        fiscal_year_start_month=fiscal_year_start_month,
+        fiscal_year = derive_fiscal_year_from_date(
+            value=period_date,
+            fiscal_year_start_month=fiscal_year_start_month,
         )
 
+        if period_type == "month":
+            fiscal_month = extract_calendar_month(period_date)
+            fiscal_quarter = None
+        elif period_type == "quarter":
+            raise ValueError(
+                "Quarterly uploads must explicitly include quarter information"
+            )
+        else:
+            fiscal_month = None
+            fiscal_quarter = None
+
+        period_start, period_end = derive_period_dates(
+            period_type=period_type,
+            fiscal_year=fiscal_year,
+            fiscal_quarter=fiscal_quarter,
+            fiscal_month=fiscal_month,
+            fiscal_year_start_month=fiscal_year_start_month,
+        )
 
         period_id = get_or_create_period(
             cur=cur,
@@ -261,57 +237,48 @@ def ingest_financial_file(
             fiscal_month=fiscal_month,
         )
 
-
         for col, value in row.items():
-            if col.startswith("_") or value is None:
+            if col == "period_date" or value is None:
                 continue
 
             metric_key = normalize_metric_key(col)
 
             cur.execute(
-                "select id from metric_definitions where metric_key = %s;",
+                "SELECT id FROM metric_definitions WHERE metric_key = %s;",
                 (metric_key,),
             )
-            row_metric = cur.fetchone()
-
-            if not row_metric:
-                continue  # STRICT: no guessing
-
-            metric_id = row_metric[0]
+            res = cur.fetchone()
+            if not res:
+                continue
 
             cur.execute(
                 """
-                insert into financial_facts (
-                    company_id, period_id, metric_id, value, source_system
-                )
-                values (%s, %s, %s, %s, %s)
-                on conflict do nothing;
+                INSERT INTO financial_facts
+                    (company_id, period_id, metric_id, value, source_system)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING;
                 """,
-                (company_id, period_id, metric_id, value, source_type),
+                (company_id, period_id, res[0], value, source_type),
             )
 
     conn.commit()
 
     # ------------------------------------------------------------
-    # 7. Generate summaries
+    # 7. Generate summaries + embeddings
     # ------------------------------------------------------------
     generate_and_store_monthly_summary(company_id)
     generate_and_store_quarterly_uploaded_summary(company_id)
     generate_and_store_yearly_uploaded_summary(company_id)
-
-    # ------------------------------------------------------------
-    # 8. Generate embeddings
-    # ------------------------------------------------------------
     embed_missing_summaries(company_id)
 
     cur.execute(
         """
-        update source_documents
-        set ingestion_status = 'completed',
+        UPDATE source_documents
+        SET ingestion_status = 'completed',
             last_processed_at = %s
-        where id = %s;
+        WHERE id = %s;
         """,
-        (datetime.now(timezone.utc), source_document_id),
+        (datetime.now(timezone.utc), source_doc["id"]),
     )
     conn.commit()
 
