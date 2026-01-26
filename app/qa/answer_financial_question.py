@@ -1,6 +1,10 @@
 import asyncio
 
 from app.retrieval.retrieve_financial_evidence import retrieve_financial_evidence
+from app.retrieval.retrieve_evidence_sources_from_summaries import (
+    retrieve_evidence_sources_from_summaries,
+)
+
 from app.qa.claude_prompt import build_prompt
 from app.llm.local_llm import call_llm
 
@@ -10,54 +14,59 @@ from app.contracts.confidence_contract import compute_confidence
 from app.contracts.limitations_contract import generate_limitations
 from app.contracts.severity import Severity
 
-# 🔽 NEW IMPORTS (presentation layer)
+# Presentation layer
 from app.presentation.presentation_llm import call_presentation_llm
 from app.presentation.presentation_builder import build_presentation
 from app.presentation.statement_resolver import resolve_statements
 
+from app.db.connection import get_db_connection
+from app.ingestion.period_derivation import resolve_time_range
 
 
 async def answer_question(question: str, company_id: str) -> dict:
     """
     Contract-compliant financial question answering.
-
-    Principles:
-    - SQL + summaries are the source of truth
-    - LLM is used ONLY for reasoning and explanation
-    - Presentation logic is SEPARATE and deterministic
-    - Confidence, severity, limitations are deterministic
-    - No hallucinated numbers
     """
 
     # ------------------------------------------------------------
-    # 1️⃣ Retrieve evidence (SQL + pgvector summaries)
+    # 1️⃣ Retrieve evidence (summaries)
     # ------------------------------------------------------------
     evidence = retrieve_financial_evidence(
         question=question,
         company_id=company_id
     )
 
-    # Sort evidence chronologically (important for trend questions)
     evidence = sorted(
         evidence,
         key=lambda x: x.get("period_start") or ""
     )
-    statements = resolve_statements(question, evidence)
-
-    print("DEBUG — resolved statements:", statements)
-
 
     # ------------------------------------------------------------
-    # 2️⃣ Handle no-evidence case (hard stop)
+    # 2️⃣ Resolve time range (BEFORE LLM)
+    # ------------------------------------------------------------
+    start, end = resolve_time_range(question, evidence)
+
+    if start and end:
+        evidence = [
+            s for s in evidence
+            if s.get("period_start") >= start
+            and s.get("period_end") <= end
+        ]
+
+    statements = resolve_statements(question, evidence)
+    print("DEBUG — resolved statements:", statements)
+
+    # ------------------------------------------------------------
+    # 3️⃣ Handle no-evidence case
     # ------------------------------------------------------------
     if not evidence:
         return {
             "answer": "Data is insufficient to answer this question confidently.",
-            "evidence": [],
+            "evidence_sources": [],
             "confidence": "low",
             "severity": Severity.HIGH.value,
             "limitations": [
-                "No relevant financial summaries were found for the uploaded data."
+                "No relevant financial data was found for the requested time period."
             ],
             "presentation": {
                 "main": {"kpis": [], "charts": []},
@@ -67,24 +76,15 @@ async def answer_question(question: str, company_id: str) -> dict:
         }
 
     # ------------------------------------------------------------
-    # 3️⃣ Collect validation issues (future-ready)
+    # 4️⃣ Severity + behavior
     # ------------------------------------------------------------
     validation_issues = []
-
-    # ------------------------------------------------------------
-    # 4️⃣ Reduce severity deterministically
-    # ------------------------------------------------------------
     max_severity = reduce_severity(validation_issues)
 
-    # ------------------------------------------------------------
-    # 5️⃣ Decide agent behavior
-    # ------------------------------------------------------------
-    behavior = AGENT_BEHAVIOR[max_severity]
-
-    if behavior == "refuse":
+    if AGENT_BEHAVIOR[max_severity] == "refuse":
         return {
             "answer": "The available data is insufficient or unreliable to answer this question.",
-            "evidence": evidence,
+            "evidence_sources": [],
             "confidence": "low",
             "severity": max_severity.value,
             "limitations": generate_limitations(validation_issues),
@@ -96,53 +96,72 @@ async def answer_question(question: str, company_id: str) -> dict:
         }
 
     # ------------------------------------------------------------
-    # 6️⃣ Build answer prompt strictly from evidence
+    # 5️⃣ Build answer prompt + run LLM
     # ------------------------------------------------------------
     answer_prompt = build_prompt(question, evidence, statements)
-
-    # ------------------------------------------------------------
-    # 7️⃣ Run LLM calls IN PARALLEL
-    # ------------------------------------------------------------
-    answer =call_llm(answer_prompt)
-    
+    answer = call_llm(answer_prompt)
 
     presentation_intent = await call_presentation_llm(
-    llm_client=None,
-    question=question,
-    summaries=evidence,
-    statements=statements
+        llm_client=None,
+        question=question,
+        summaries=evidence,
+        statements=statements
     )
-
-    presentation = build_presentation(
-        presentation_intent=presentation_intent,
-        summaries=evidence
-    )
-
 
     # ------------------------------------------------------------
-    # 9️⃣ Compute confidence deterministically
+    # 6️⃣ Build presentation + lineage-aware evidence sources
+    # ------------------------------------------------------------
+    summary_ids = [s["id"] for s in evidence if s.get("id")]
+
+    conn = get_db_connection()
+    try:
+        presentation = build_presentation(
+            presentation_intent=presentation_intent,
+            summaries=evidence,
+            db_conn=conn
+        )
+
+        summary_ids = list({
+            e["summary_id"]
+            for e in evidence
+            if e.get("summary_id")
+        })
+
+        evidence_sources = retrieve_evidence_sources_from_summaries(
+            conn=conn,
+            summary_ids=summary_ids
+        )
+
+        print(evidence_sources)
+    finally:
+        conn.close()
+
+    # ------------------------------------------------------------
+    # 7️⃣ Confidence + limitations
     # ------------------------------------------------------------
     confidence = compute_confidence(
         max_severity=max_severity,
-        estimated_ratio=0.0,     # placeholder until estimation tracking exists
-        source_confidence=0.8,   # placeholder average confidence
+        estimated_ratio=0.0,
+        source_confidence=0.8,
     )
 
-    # ------------------------------------------------------------
-    # 🔟 Generate limitations (machine-derived)
-    # ------------------------------------------------------------
     limitations = generate_limitations(validation_issues)
-    if any(chart.get("is_proxy") for section in presentation.values() for chart in section["charts"]):
+    if any(
+        chart.get("is_proxy")
+        for section in presentation.values()
+        for chart in section["charts"]
+    ):
         limitations.append(
             "Some charts use proxy metrics due to unavailable direct metrics."
         )
 
     # ------------------------------------------------------------
-    # 1️⃣1️⃣ Final response (ANSWER + CHARTS)
+    # 8️⃣ Final response
     # ------------------------------------------------------------
+    print(evidence_sources)
     return {
         "answer": answer,
-        "evidence": evidence,
+        "evidence_sources": evidence_sources,
         "confidence": confidence,
         "severity": max_severity.value,
         "limitations": limitations,

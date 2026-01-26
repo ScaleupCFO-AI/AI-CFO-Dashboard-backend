@@ -40,7 +40,9 @@ def ingest_financial_file(
     source_type: str = "csv",
     source_grain: str = "monthly",
     is_estimated: bool = False,
+    original_filename: str | None = None,  # ✅ ADD
 ):
+
     """
     Canonical, deterministic ingestion pipeline.
 
@@ -75,7 +77,7 @@ def ingest_financial_file(
     fiscal_year_start_month, industry_code = cur.fetchone()
 
     # ------------------------------------------------------------
-    # Fetch canonical metrics registry (REQUIRED)
+    # Fetch canonical metrics registry
     # ------------------------------------------------------------
     cur.execute(
         """
@@ -110,8 +112,10 @@ def ingest_financial_file(
         company_id=company_id,
         file_hash=file_hash,
         source_type=source_type,
-        source_name=os.path.basename(file_path),
+        source_name=original_filename or os.path.basename(file_path),
     )
+
+    source_document_id = source_doc["id"]
 
     if source_doc["status"] == "completed":
         cur.close()
@@ -129,7 +133,7 @@ def ingest_financial_file(
         raise ValueError("Unsupported file type")
 
     # ------------------------------------------------------------
-    # 3. Normalize columns (STRICT)
+    # 3. Normalize columns
     # ------------------------------------------------------------
     canonical_df, report = normalize_columns(
         raw_df,
@@ -139,19 +143,16 @@ def ingest_financial_file(
             "source_grain": source_grain,
             "is_estimated": is_estimated,
         },
-        canonical_metrics=canonical_metrics,  # ✅ FIX
+        canonical_metrics=canonical_metrics,
     )
 
     store_validation_issues(company_id, report.get("issues", []))
 
-    # ------------------------------------------------------------
-    # HARD GUARANTEE: period_date
-    # ------------------------------------------------------------
     if "period_date" not in canonical_df.columns:
         raise ValueError("period_date is required for ingestion")
 
     # ------------------------------------------------------------
-    # 4. Soft metric completeness validation
+    # 4. Metric completeness validation
     # ------------------------------------------------------------
     present_metrics = {
         normalize_metric_key(col)
@@ -196,7 +197,7 @@ def ingest_financial_file(
     )
 
     # ------------------------------------------------------------
-    # 6. Insert financial facts
+    # 6. Insert financial facts (WITH source_document_id ✅)
     # ------------------------------------------------------------
     for _, row in canonical_df.iterrows():
 
@@ -211,9 +212,7 @@ def ingest_financial_file(
             fiscal_month = extract_calendar_month(period_date)
             fiscal_quarter = None
         elif period_type == "quarter":
-            raise ValueError(
-                "Quarterly uploads must explicitly include quarter information"
-            )
+            raise ValueError("Quarterly uploads must include quarter info")
         else:
             fiscal_month = None
             fiscal_quarter = None
@@ -253,12 +252,25 @@ def ingest_financial_file(
 
             cur.execute(
                 """
-                INSERT INTO financial_facts
-                    (company_id, period_id, metric_id, value, source_system)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO financial_facts (
+                    company_id,
+                    period_id,
+                    metric_id,
+                    value,
+                    source_system,
+                    source_document_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT DO NOTHING;
                 """,
-                (company_id, period_id, res[0], value, source_type),
+                (
+                    company_id,
+                    period_id,
+                    res[0],
+                    value,
+                    source_type,
+                    source_document_id,
+                ),
             )
 
     conn.commit()
@@ -278,7 +290,7 @@ def ingest_financial_file(
             last_processed_at = %s
         WHERE id = %s;
         """,
-        (datetime.now(timezone.utc), source_doc["id"]),
+        (datetime.now(timezone.utc), source_document_id),
     )
     conn.commit()
 

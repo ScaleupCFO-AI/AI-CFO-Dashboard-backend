@@ -36,10 +36,11 @@ async def upload_financial_file(
 
         result = ingest_financial_file(
             file_path=tmp_path,
-            user_email=user_email,       # 🔑 PASS IT
+            user_email=user_email,       
             company_name=company_name,
-            source_type="csv",           # explicit, deterministic
+            source_type="csv",      
             source_grain="monthly",
+            source_name=file.filename,
         )
 
         print("Ingestion succeeded. Company ID:", result["company_id"])

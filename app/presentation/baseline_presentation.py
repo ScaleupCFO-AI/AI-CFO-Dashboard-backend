@@ -1,38 +1,44 @@
 from app.retrieval.retrieve_company_summaries import retrieve_company_summaries
 from app.presentation.presentation_builder import build_presentation
-from app.presentation.presentation_schema import PresentationIntent, MetricIntent
+from app.presentation.presentation_schema import PresentationIntent
 from app.presentation.chart_intents import ChartIntent
+from app.db.connection import get_db_connection
 
 
 def get_company_baseline(company_id: str) -> dict:
     """
     Deterministic baseline dashboard presentation.
-    Uses SAME chart builder as /query.
-    No LLM.
+
+    - NO LLM
+    - Same chart builder as /query
+    - Root KPIs are fixed
+    - Supporting KPIs are derived via metric_dependencies
     """
 
-    # 1️⃣ Get summaries (same source as /query)
+    # 1️⃣ Get summaries
     summaries = retrieve_company_summaries(company_id)
 
-    # 2️⃣ Define baseline intent deterministically
+    # 2️⃣ Define baseline ROOT KPIs
     baseline_intent = PresentationIntent(
-        main=[
-            MetricIntent(metric="revenue", intent=ChartIntent.TREND),
-            MetricIntent(metric="gross_margin", intent=ChartIntent.TREND),
-            MetricIntent(metric="cash_balance", intent=ChartIntent.TREND),
+        root_kpis=[
+            "revenue",
+            "gross_margin",
+            "cash_balance",
         ],
-        first_degree=[],
-        second_degree=[
-            MetricIntent(metric="customer_mix", intent=ChartIntent.CONTRIBUTION),
-            MetricIntent(metric="channel_mix", intent=ChartIntent.CONTRIBUTION),
-            MetricIntent(metric="product_mix", intent=ChartIntent.CONTRIBUTION),
-        ],
+        intent=ChartIntent.TREND.value,  # ensure string enum
+        time_scope=None
     )
 
-    # 3️⃣ Build charts using the SAME logic as /query
-    presentation = build_presentation(
-        presentation_intent=baseline_intent,
-        summaries=summaries,
-    )
+    # 3️⃣ Open DB connection
+    conn = get_db_connection()
+
+    try:
+        presentation = build_presentation(
+            presentation_intent=baseline_intent,
+            summaries=summaries,
+            db_conn=conn
+        )
+    finally:
+        conn.close()
 
     return presentation

@@ -128,3 +128,43 @@ def derive_period_dates(
         return start, end
 
     raise ValueError(f"Unsupported period_type: {period_type}")
+
+def resolve_time_range(question: str, summaries: list):
+    """
+    Deterministically resolve time phrases like 'last quarter'
+    using available summary periods.
+    """
+
+    q = question.lower()
+
+    if "last quarter" in q:
+        quarterly = [
+            s for s in summaries
+            if s.get("period_type") == "quarter"
+        ]
+
+        if not quarterly:
+            return None, None
+
+        latest = max(
+            quarterly,
+            key=lambda s: s["period_end"]
+        )
+        return latest["period_start"], latest["period_end"]
+
+    if "last month" in q:
+        monthly = [
+            s for s in summaries
+            if s.get("period_type") == "month"
+        ]
+
+        if not monthly:
+            return None, None
+
+        latest = max(
+            monthly,
+            key=lambda s: s["period_end"]
+        )
+        return latest["period_start"], latest["period_end"]
+
+    return None, None

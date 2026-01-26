@@ -23,7 +23,7 @@ async def query_financials(request: QueryRequest):
     - No business logic in API layer
     - Deterministic charts
     """
-
+    # print(await answer_question)
     return await answer_question(
         question=request.question,
         company_id=request.company_id

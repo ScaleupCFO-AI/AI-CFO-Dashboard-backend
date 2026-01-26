@@ -29,21 +29,23 @@ def retrieve_financial_evidence(
     cur.execute(
         """
         select
-            s.content,
-            p.period_start,
-            p.period_end,
-            p.period_type,
-            p.fiscal_year,
-            p.fiscal_quarter,
-            s.summary_type
-        from financial_summaries s
-        join summary_embeddings e
-          on s.id = e.summary_id
-        left join financial_periods p
-          on s.period_id = p.id
-        where s.company_id = %s
-        order by e.embedding <-> %s
-        limit %s;
+    s.id as summary_id,
+    s.content,
+    p.period_start,
+    p.period_end,
+    p.period_type,
+    p.fiscal_year,
+    p.fiscal_quarter,
+    s.summary_type
+from financial_summaries s
+join summary_embeddings e
+  on s.id = e.summary_id
+left join financial_periods p
+  on s.period_id = p.id
+where s.company_id = %s
+order by e.embedding <-> %s
+limit %s;
+
         """,
         (company_id, embedding_str, top_k)
     )
@@ -55,24 +57,28 @@ def retrieve_financial_evidence(
 
     evidence = []
     for (
-        content,
-        period_start,
-        period_end,
-        period_type,
-        fiscal_year,
-        fiscal_quarter,
-        summary_type,
-    ) in rows:
+    summary_id,
+    content,
+    period_start,
+    period_end,
+    period_type,
+    fiscal_year,
+    fiscal_quarter,
+    summary_type,
+) in rows:
+
         evidence.append(
-            {
-                "content": content,
-                "period_start": period_start,
-                "period_end": period_end,
-                "period_type": period_type,
-                "fiscal_year": fiscal_year,
-                "fiscal_quarter": fiscal_quarter,
-                "summary_type": summary_type,
-            }
-        )
+    {
+        "summary_id": summary_id,   # 🔑 REQUIRED
+        "content": content,
+        "period_start": period_start,
+        "period_end": period_end,
+        "period_type": period_type,
+        "fiscal_year": fiscal_year,
+        "fiscal_quarter": fiscal_quarter,
+        "summary_type": summary_type,
+    }
+)
+
 
     return evidence

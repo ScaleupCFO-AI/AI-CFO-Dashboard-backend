@@ -1,13 +1,17 @@
-from typing import List, Optional
 from pydantic import BaseModel
-from app.presentation.chart_intents import ChartIntent
+from typing import List, Optional
+from enum import Enum
 
-class MetricIntent(BaseModel):
-    metric: str                 # canonical metric name
-    intent: ChartIntent
-    time_scope: Optional[str] = None  # recent | current | fy
+
+class IntentEnum(str, Enum):
+    trend = "trend"
+    snapshot = "snapshot"
+    comparison = "comparison"
+    contribution = "contribution"
+    variance = "variance"
+
 
 class PresentationIntent(BaseModel):
-    main: List[MetricIntent]
-    first_degree: List[MetricIntent]
-    second_degree: List[MetricIntent]
+    root_kpis: List[str]
+    intent: Optional[IntentEnum]
+    time_scope: Optional[str]

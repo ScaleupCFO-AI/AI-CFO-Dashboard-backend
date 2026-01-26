@@ -1,0 +1,36 @@
+# Core API
+fastapi==0.128.0
+uvicorn==0.40.0
+starlette==0.50.0
+
+# Data & DB
+pandas==2.2.3
+numpy==2.1.3
+psycopg2-binary==2.9.11
+SQLAlchemy==2.0.45
+greenlet==3.3.0
+
+# Validation & Models
+pydantic==2.12.5
+pydantic_core==2.41.5
+annotated-types==0.7.0
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+
+# HTTP & async
+anyio==4.12.1
+h11==0.16.0
+httptools==0.7.1
+websockets==16.0
+requests==2.32.3
+idna==3.11
+
+# Env & config
+python-dotenv==1.2.1
+PyYAML==6.0.3
+python-multipart==0.0.9
+
+# Dev / reload
+watchfiles==1.1.1
+click==8.3.1
+colorama==0.4.6

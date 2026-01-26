@@ -3,23 +3,21 @@ from app.presentation.summary_data_adapter import (
     extract_metric_rows,
     build_chart_data
 )
-from app.presentation.presentation_schema import PresentationIntent
 from app.presentation.available_metrics import extract_available_metrics
 from app.presentation.metric_resolution import resolve_metric_or_proxy
 
+from app.metrics.dependency_graph import load_metric_dependency_graph
+from app.metrics.kpi_hierarchy import build_kpi_hierarchy
+
 
 def _normalize_metric(name: str) -> str:
-    """
-    Canonical metric normalization:
-    - lowercase
-    - spaces → underscores
-    """
     return name.strip().lower().replace(" ", "_")
 
 
 def build_presentation(
-    presentation_intent: PresentationIntent,
-    summaries: list
+    presentation_intent,
+    summaries: list,
+    db_conn
 ) -> dict:
 
     presentation = {
@@ -28,54 +26,57 @@ def build_presentation(
         "second_degree": {"kpis": [], "charts": []},
     }
 
-    print("DEBUG — initial presentation:", presentation)
+    # 1️⃣ Load dependency graph
+    dependency_graph = load_metric_dependency_graph(db_conn)
 
-    # 🔹 Normalize available metrics
+    # 2️⃣ No root KPIs → nothing to show
+    if not presentation_intent.root_kpis:
+        return presentation
+
+    # 3️⃣ Build KPI hierarchy
+    kpi_hierarchy = build_kpi_hierarchy(
+        root_kpis=[_normalize_metric(k) for k in presentation_intent.root_kpis],
+        dependency_graph=dependency_graph,
+        max_depth=2
+    )
+
+    # 4️⃣ Normalize available metrics from summaries
     available_metrics_raw = extract_available_metrics(summaries)
     available_metrics = {_normalize_metric(m) for m in available_metrics_raw}
 
-    print("DEBUG — available_metrics (normalized):", available_metrics)
-
-    for section_name in ["main", "first_degree", "second_degree"]:
-        metric_intents = getattr(presentation_intent, section_name)
-
-        for mi in metric_intents:
-            requested_metric = _normalize_metric(mi.metric)
-
-            print("DEBUG — requested metric:", requested_metric)
+    # 5️⃣ Build charts per section
+    for section in ["main", "first_degree", "second_degree"]:
+        for metric in kpi_hierarchy.get(section, []):
 
             resolved_metric, is_proxy = resolve_metric_or_proxy(
-                requested_metric,
+                metric,
                 available_metrics
             )
 
-            print("DEBUG — resolved metric:", resolved_metric, "proxy:", is_proxy)
-
             if not resolved_metric:
-                continue  # nothing safe to show
+                continue
 
-            # 🔹 IMPORTANT: extract rows using the resolved metric
             rows = extract_metric_rows(resolved_metric, summaries)
-            print("DEBUG — extracted rows:", rows)
-
             data, note = build_chart_data(resolved_metric, rows)
 
             if not data:
                 continue
 
-            chart_spec = resolve_chart_spec(resolved_metric, mi.intent, rows)
+            chart_spec = resolve_chart_spec(
+                resolved_metric,
+                presentation_intent.intent,
+                rows
+            )
 
-            presentation[section_name]["kpis"].append(resolved_metric)
-            presentation[section_name]["charts"].append({
+            presentation[section]["kpis"].append(resolved_metric)
+            presentation[section]["charts"].append({
                 "metric": resolved_metric,
-                "requested_metric": mi.metric,
                 "is_proxy": is_proxy,
-                "intent": mi.intent.value,
+                "intent": presentation_intent.intent.value if presentation_intent.intent else None,
                 "note": "proxy_used" if is_proxy else None,
                 **chart_spec,
                 "data": data
             })
-
-        print(f"DEBUG — presentation after {section_name}:", presentation)
+    print("FINAL PRESENTATION PAYLOAD:", presentation)
 
     return presentation
