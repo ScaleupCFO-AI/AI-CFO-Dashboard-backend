@@ -1,6 +1,7 @@
 def retrieve_evidence_sources_from_summaries(conn, summary_ids: list[str]):
     """
     Fetch source documents that actually contributed to the given summaries.
+    Returns USER-FACING filenames.
     """
 
     if not summary_ids:
@@ -11,7 +12,7 @@ def retrieve_evidence_sources_from_summaries(conn, summary_ids: list[str]):
             """
             SELECT DISTINCT
                 sd.source_type,
-                sd.source_name,
+                COALESCE(sd.original_filename, sd.source_name) AS source_name,
                 sd.uploaded_at
             FROM summary_sources ss
             JOIN source_documents sd

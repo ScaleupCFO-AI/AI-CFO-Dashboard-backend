@@ -1,5 +1,7 @@
+# app/presentation/presentation_schema.py
+
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from enum import Enum
 
 
@@ -14,4 +16,5 @@ class IntentEnum(str, Enum):
 class PresentationIntent(BaseModel):
     root_kpis: List[str]
     intent: Optional[IntentEnum]
+    kpi_intents: Dict[str, IntentEnum] = {}
     time_scope: Optional[str]

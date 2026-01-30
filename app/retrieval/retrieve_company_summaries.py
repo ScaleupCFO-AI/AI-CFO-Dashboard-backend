@@ -30,7 +30,8 @@ def retrieve_company_summaries(company_id: str, limit: int = 12):
         LEFT JOIN financial_periods p
           ON s.period_id = p.id
         WHERE s.company_id = %s
-        ORDER BY p.period_start DESC
+        ORDER BY p.period_start ASC NULLS LAST
+    
         LIMIT %s;
         """,
         (company_id, limit),

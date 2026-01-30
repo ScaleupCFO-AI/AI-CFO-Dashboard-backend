@@ -22,12 +22,12 @@ from app.normalization.column_mapper import normalize_columns
 from app.normalization.schema_definitions import CANONICAL_FIELDS
 from app.validations.metric_completeness import check_missing_expected_metrics
 from app.validations.store_issues import store_validation_issues
+from app.summarization.monthly_summary import generate_monthly_context_summaries
 from app.generate_financial_summaries import (
-    generate_and_store_monthly_summary,
     generate_and_store_quarterly_uploaded_summary,
     generate_and_store_yearly_uploaded_summary,
 )
-from app.embed_financial_summaries import embed_missing_summaries
+from app.embeddings.generate_embedding import embed_missing_summaries
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -278,7 +278,7 @@ def ingest_financial_file(
     # ------------------------------------------------------------
     # 7. Generate summaries + embeddings
     # ------------------------------------------------------------
-    generate_and_store_monthly_summary(company_id)
+    generate_monthly_context_summaries(company_id)
     generate_and_store_quarterly_uploaded_summary(company_id)
     generate_and_store_yearly_uploaded_summary(company_id)
     embed_missing_summaries(company_id)

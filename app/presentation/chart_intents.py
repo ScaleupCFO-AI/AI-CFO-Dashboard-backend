@@ -6,3 +6,4 @@ class ChartIntent(str, Enum):
     COMPARISON = "comparison"
     CONTRIBUTION = "contribution"
     VARIANCE = "variance"
+    

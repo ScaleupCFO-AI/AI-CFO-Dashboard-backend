@@ -1,104 +1,158 @@
-from collections import Counter
-def generate_monthly_summary(financial_rows, validation_issues):
+import os
+import psycopg2
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+import calendar
+from collections import defaultdict
+
+from app.summarization.context_registry import MONTHLY_CONTEXT_REGISTRY
+
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def _insert_summary_sources(cur, company_id, period_id, summary_id):
     """
-    financial_rows: list of dicts from financial_periods
-    validation_issues: list of dicts from financial_validations
+    Insert deterministic lineage between summary and source_documents.
     """
 
-    if not financial_rows:
-        return None
-
-    latest = financial_rows[-1]
-    prev = financial_rows[-2] if len(financial_rows) > 1 else None
-
-    summary = []
-
-    # Revenue trend
-    if prev:
-        growth = ((latest["revenue"] - prev["revenue"]) / prev["revenue"]) * 100
-        summary.append(
-            f"Revenue for the latest month was ₹{latest['revenue']:,.0f}, "
-            f"representing a {growth:.1f}% month-on-month change."
-        )
-    else:
-        summary.append(
-            f"Revenue for the first recorded month was ₹{latest['revenue']:,.0f}."
-        )
-
-    # EBITDA
-    summary.append(
-        f"EBITDA stood at ₹{latest['ebitda']:,.0f}, "
-        f"with a closing cash balance of ₹{latest['cash_closing']:,.0f} "
-        f"and runway of {latest['runway_months']} months."
+    cur.execute(
+        """
+        SELECT DISTINCT source_document_id
+        FROM financial_facts
+        WHERE company_id = %s
+          AND period_id = %s;
+        """,
+        (company_id, period_id),
     )
 
-    # Validation flags
+    source_rows = cur.fetchall()
 
-
-    issue_counts = Counter(v["severity"] for v in validation_issues)
-
-    if issue_counts:
-        notes = []
-
-        if issue_counts.get("critical"):
-            notes.append("critical data quality issues")
-
-        if issue_counts.get("high"):
-            notes.append("high-severity data ambiguities")
-
-        if issue_counts.get("medium"):
-            notes.append("estimated or partially derived data")
-
-        if notes:
-            summary.append(
-                "Data quality notes: " + ", ".join(notes) +
-                ". These may affect the confidence of conclusions."
+    for (source_document_id,) in source_rows:
+        cur.execute(
+            """
+            INSERT INTO summary_sources (
+                summary_id,
+                source_document_id
             )
-
-
-        return " ".join(summary)
-
-def generate_quarterly_summary(financial_rows, validation_issues):
-    if not financial_rows:
-        return None
-
-    latest = financial_rows[-1]
-    prev = financial_rows[-2] if len(financial_rows) > 1 else None
-
-    summary = []
-
-    if prev:
-        summary.append(
-            f"Revenue in the latest quarter was ₹{latest['revenue']:,.0f}, "
-            f"compared to ₹{prev['revenue']:,.0f} in the previous quarter."
-        )
-    else:
-        summary.append(
-            f"Revenue in the first recorded quarter was ₹{latest['revenue']:,.0f}."
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING;
+            """,
+            (summary_id, source_document_id),
         )
 
-    summary.append(
-        f"EBITDA for the quarter was ₹{latest['ebitda']:,.0f}, "
-        f"with a cash balance of ₹{latest['cash_balance']:,.0f}."
+def generate_monthly_context_summaries(company_id: str):
+    """
+    Orchestrates monthly KPI context summaries.
+
+    Responsibilities:
+    - Fetch SQL facts
+    - Group by metric + period
+    - Call KPI context generators
+    - Persist summaries + lineage
+    """
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    # ------------------------------------------------------------
+    # 1. Fetch all monthly facts for context-eligible KPIs
+    # ------------------------------------------------------------
+    metric_keys = list(MONTHLY_CONTEXT_REGISTRY.keys())
+
+    cur.execute(
+        """
+        SELECT
+            p.id AS period_id,
+            p.period_start,
+            m.metric_key,
+            f.value
+        FROM financial_facts f
+        JOIN financial_periods p ON f.period_id = p.id
+        JOIN metric_definitions m ON f.metric_id = m.id
+        WHERE p.company_id = %s
+          AND p.period_type = 'month'
+          AND m.metric_key = ANY(%s)
+        ORDER BY m.metric_key, p.period_start ASC;
+        """,
+        (company_id, metric_keys),
     )
 
-    # Data quality notes (same logic you already wrote)
-    from collections import Counter
-    issue_counts = Counter(v["severity"] for v in validation_issues)
+    rows = cur.fetchall()
+    if not rows:
+        cur.close()
+        conn.close()
+        return
 
-    if issue_counts:
-        notes = []
-        if issue_counts.get("critical"):
-            notes.append("critical data quality issues")
-        if issue_counts.get("high"):
-            notes.append("high-severity data ambiguities")
-        if issue_counts.get("medium"):
-            notes.append("estimated or partially derived data")
+    # ------------------------------------------------------------
+    # 2. Organize by metric → ordered values per period
+    # ------------------------------------------------------------
+    by_metric = defaultdict(list)
 
-        if notes:
-            summary.append(
-                "Data quality notes: " + ", ".join(notes) +
-                ". These may affect confidence."
+    for period_id, period_start, metric_key, value in rows:
+        by_metric[metric_key].append(
+            {
+                "period_id": period_id,
+                "period_start": period_start,
+                "value": value,
+            }
+        )
+
+    # ------------------------------------------------------------
+    # 3. Generate and store summaries
+    # ------------------------------------------------------------
+    for metric_key, entries in by_metric.items():
+        config = MONTHLY_CONTEXT_REGISTRY[metric_key]
+        generator = config["generator"]
+        summary_type = config["summary_type"]
+
+        values_so_far = []
+
+        for entry in entries:
+            values_so_far.append(entry["value"])
+
+            summary_text = generator(values_so_far)
+
+            month_name = calendar.month_name[entry["period_start"].month]
+            year = entry["period_start"].year
+
+            full_text = (
+                f"{summary_text} "
+                f"Period: {month_name} {year}."
             )
 
-    return " ".join(summary)
+            cur.execute(
+                """
+                INSERT INTO financial_summaries (
+                    company_id,
+                    period_id,
+                    summary_type,
+                    content,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (company_id, period_id, summary_type)
+                DO UPDATE SET
+                    content = EXCLUDED.content,
+                    created_at = EXCLUDED.created_at
+                RETURNING id;
+                """,
+                (
+                    company_id,
+                    entry["period_id"],
+                    summary_type,
+                    full_text,
+                    datetime.now(timezone.utc),
+                ),
+            )
+
+            summary_id = cur.fetchone()[0]
+            _insert_summary_sources(
+                cur,
+                company_id,
+                entry["period_id"],
+                summary_id,
+            )
+
+    conn.commit()
+    cur.close()
+    conn.close()

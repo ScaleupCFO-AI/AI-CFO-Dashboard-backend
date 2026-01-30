@@ -20,10 +20,12 @@ CREATE TABLE public.financial_facts (
   source_system text,
   confidence_score double precision,
   created_at timestamp without time zone DEFAULT now(),
+  source_document_id uuid,
   CONSTRAINT financial_facts_pkey PRIMARY KEY (id),
   CONSTRAINT financial_facts_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT financial_facts_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id),
   CONSTRAINT financial_facts_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id),
-  CONSTRAINT financial_facts_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id)
+  CONSTRAINT financial_facts_source_document_fkey FOREIGN KEY (source_document_id) REFERENCES public.source_documents(id)
 );
 CREATE TABLE public.financial_periods (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -67,6 +69,16 @@ CREATE TABLE public.metric_definitions (
   CONSTRAINT metric_definitions_pkey PRIMARY KEY (id),
   CONSTRAINT metric_definitions_statement_type_id_fkey FOREIGN KEY (statement_type_id) REFERENCES public.statement_types(id)
 );
+CREATE TABLE public.metric_dependencies (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  parent_metric_id uuid NOT NULL,
+  child_metric_id uuid NOT NULL,
+  dependency_type text NOT NULL DEFAULT 'direct'::text,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT metric_dependencies_pkey PRIMARY KEY (id),
+  CONSTRAINT metric_dependencies_parent_metric_id_fkey FOREIGN KEY (parent_metric_id) REFERENCES public.metric_definitions(id),
+  CONSTRAINT metric_dependencies_child_metric_id_fkey FOREIGN KEY (child_metric_id) REFERENCES public.metric_definitions(id)
+);
 CREATE TABLE public.source_documents (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL,
@@ -79,6 +91,7 @@ CREATE TABLE public.source_documents (
   last_processed_at timestamp without time zone,
   metadata jsonb,
   uploaded_at timestamp without time zone DEFAULT now(),
+  original_filename text,
   CONSTRAINT source_documents_pkey PRIMARY KEY (id),
   CONSTRAINT source_documents_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id)
 );
@@ -96,6 +109,15 @@ CREATE TABLE public.summary_embeddings (
   CONSTRAINT summary_embeddings_pkey PRIMARY KEY (id),
   CONSTRAINT summary_embeddings_summary_id_fkey FOREIGN KEY (summary_id) REFERENCES public.financial_summaries(id)
 );
+CREATE TABLE public.summary_sources (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  summary_id uuid NOT NULL,
+  source_document_id uuid NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT summary_sources_pkey PRIMARY KEY (id),
+  CONSTRAINT summary_sources_summary_id_fkey FOREIGN KEY (summary_id) REFERENCES public.financial_summaries(id),
+  CONSTRAINT summary_sources_source_document_id_fkey FOREIGN KEY (source_document_id) REFERENCES public.source_documents(id)
+);
 CREATE TABLE public.validation_issues (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL,
@@ -109,6 +131,6 @@ CREATE TABLE public.validation_issues (
   resolved_at timestamp without time zone,
   CONSTRAINT validation_issues_pkey PRIMARY KEY (id),
   CONSTRAINT validation_issues_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
-  CONSTRAINT validation_issues_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id),
-  CONSTRAINT validation_issues_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id)
+  CONSTRAINT validation_issues_metric_id_fkey FOREIGN KEY (metric_id) REFERENCES public.metric_definitions(id),
+  CONSTRAINT validation_issues_period_id_fkey FOREIGN KEY (period_id) REFERENCES public.financial_periods(id)
 );

@@ -1,10 +1,18 @@
 from app.presentation.chart_intents import ChartIntent
 
-def resolve_chart_spec(metric: str, intent: ChartIntent, rows: list) -> dict:
+
+def resolve_chart_spec(metric: str, intent: ChartIntent | None, rows: list) -> dict:
     """
     Maps presentation intent → visualization grammar.
     Chart type choice is deterministic and data-driven.
+
+    SAFETY RULE:
+    - intent may be None → default to TREND
     """
+
+    if intent is None:
+        print(f"[WARN] Chart intent is None for metric '{metric}'. Defaulting to TREND.")
+        intent = ChartIntent.TREND
 
     if intent == ChartIntent.TREND:
         return {
@@ -28,9 +36,7 @@ def resolve_chart_spec(metric: str, intent: ChartIntent, rows: list) -> dict:
         }
 
     if intent == ChartIntent.CONTRIBUTION:
-        # PIE when showing parts-of-whole at a single point in time
-        # STACKED BAR when contribution across periods
-        has_multiple_periods = len({r["period_label"] for r in rows}) > 1
+        has_multiple_periods = len({r.get("period_label") for r in rows}) > 1
 
         if has_multiple_periods:
             return {
@@ -52,4 +58,10 @@ def resolve_chart_spec(metric: str, intent: ChartIntent, rows: list) -> dict:
             "y_keys": ["value"]
         }
 
-    raise ValueError(f"Unsupported chart intent: {intent}")
+    # FINAL SAFETY NET (never crash API)
+    print(f"[ERROR] Unsupported chart intent '{intent}' for metric '{metric}'. Falling back to TREND.")
+    return {
+        "type": "line",
+        "x_key": "period",
+        "y_keys": ["value"]
+    }

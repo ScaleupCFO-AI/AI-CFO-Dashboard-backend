@@ -36,7 +36,8 @@ def get_company_baseline(company_id: str) -> dict:
         presentation = build_presentation(
             presentation_intent=baseline_intent,
             summaries=summaries,
-            db_conn=conn
+            db_conn=conn,
+            company_id=company_id,
         )
     finally:
         conn.close()

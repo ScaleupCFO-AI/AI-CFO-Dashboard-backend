@@ -1,6 +1,7 @@
 import psycopg2
 import os
 from dotenv import load_dotenv
+from app.embeddings.generate_embedding import generate_embedding
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -20,8 +21,13 @@ def retrieve_financial_evidence(
     """
 
     # Placeholder embedding until real model is wired
-    query_embedding = [0.0] * 1536
-    embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
+    if not question or not question.strip():
+        raise ValueError("Question text cannot be empty")
+
+    # ------------------------------------------------------------
+    # 1. Generate query embedding (REAL, NOT STUB)
+    # ------------------------------------------------------------
+    query_embedding = generate_embedding(question)
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
@@ -43,11 +49,11 @@ join summary_embeddings e
 left join financial_periods p
   on s.period_id = p.id
 where s.company_id = %s
-order by e.embedding <-> %s
+ORDER BY e.embedding <-> %s::vector
 limit %s;
 
         """,
-        (company_id, embedding_str, top_k)
+        (company_id, query_embedding, top_k)
     )
 
     rows = cur.fetchall()

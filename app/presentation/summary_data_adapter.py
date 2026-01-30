@@ -27,22 +27,35 @@ def extract_metric_rows(metric: str, summaries: list) -> list[dict]:
                 raw_metric, raw_value = line[2:].split(":", 1)
                 normalized = _normalize_metric(raw_metric)
 
+                DISPLAY_NAME_ALIASES = {
+                    "cash_runway_(months)": "runway_months",
+                }
+
+                normalized = DISPLAY_NAME_ALIASES.get(normalized, normalized)
+
                 if normalized == metric:
                     rows.append({
                         "period": period_date,
-                        "period_label": period_label,  # ✅ ADD THIS
+                        "period_label": period_label,
                         "value": raw_value.strip()
                     })
+
 
     return rows
 
 
 
-def build_chart_data(metric: str, rows: list) -> tuple[list | None, str | None]:
+def build_chart_data(metric: str, rows: list):
+    print(f"[DEBUG][build_chart_data] metric={metric} rows_count={len(rows)}")
+    if rows:
+        print(f"[DEBUG][build_chart_data] sample_row={rows[0]}")
+
     if not rows:
         return None, "metric_not_available"
 
-    # Contribution summaries (must already exist in SQL)
+    # --------------------------------------------------
+    # 1️⃣ Contribution summaries (DO NOT SORT)
+    # --------------------------------------------------
     # Expected shape:
     # { metric, component, value, period_label }
     if "component" in rows[0]:
@@ -55,7 +68,17 @@ def build_chart_data(metric: str, rows: list) -> tuple[list | None, str | None]:
             for r in rows
         ], None
 
-    # Normal time-series
+    # --------------------------------------------------
+    # 2️⃣ Sort time-series rows ASCENDING by period
+    # --------------------------------------------------
+    rows = sorted(
+        rows,
+        key=lambda r: r.get("period_label")
+    )
+
+    # --------------------------------------------------
+    # 3️⃣ Normal time-series
+    # --------------------------------------------------
     if len(rows) >= 2:
         return [
             {
@@ -65,7 +88,9 @@ def build_chart_data(metric: str, rows: list) -> tuple[list | None, str | None]:
             for r in rows
         ], None
 
-    # Snapshot fallback
+    # --------------------------------------------------
+    # 4️⃣ Snapshot fallback (single point)
+    # --------------------------------------------------
     return [
         {
             "period": rows[0]["period_label"],

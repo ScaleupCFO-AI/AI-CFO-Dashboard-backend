@@ -15,8 +15,7 @@ def compute_file_hash(file_path: str) -> str:
 
 def normalize_metric_key(col: str) -> str:
     """
-    Normalize metric keys to avoid duplicates:
-    Revenue, revenue , Total-Revenue -> revenue / total_revenue
+    Normalize metric keys to avoid duplicates.
     """
     return (
         col.strip()
@@ -35,12 +34,15 @@ def get_or_create_source_document(
 ):
     """
     Register or fetch ingestion job for a file.
+
+    source_name = INTERNAL filename (temp / stored name)
+    original_filename is attached later in upload route
     """
     cur.execute(
         """
-        select id, ingestion_status
-        from source_documents
-        where company_id = %s and file_hash = %s;
+        SELECT id, ingestion_status
+        FROM source_documents
+        WHERE company_id = %s AND file_hash = %s;
         """,
         (company_id, file_hash),
     )
@@ -51,20 +53,21 @@ def get_or_create_source_document(
 
     cur.execute(
         """
-        insert into source_documents (
+        INSERT INTO source_documents (
             company_id,
             source_type,
             source_name,
             file_hash,
             ingestion_status
         )
-        values (%s, %s, %s, %s, 'uploaded')
-        returning id;
+        VALUES (%s, %s, %s, %s, 'uploaded')
+        RETURNING id;
         """,
         (company_id, source_type, source_name, file_hash),
     )
 
     return {"id": cur.fetchone()[0], "status": "uploaded", "is_new": True}
+
 
 
 def get_or_create_period(
